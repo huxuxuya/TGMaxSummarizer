@@ -76,12 +76,12 @@ def truncate_text(text: str, max_length: int = 100) -> str:
 
 def format_chat_stats(stats: Dict) -> str:
     """Форматировать статистику чата для отображения"""
-    text = f"📊 Статистика чата\n\n"
+    text = f"📊 *Статистика* чата\n\n"
     text += f"• Всего сообщений: {stats.get('total_messages', 0)}\n"
     text += f"• Дней загружено: {stats.get('days_count', 0)}\n\n"
     
     if stats.get('recent_days'):
-        text += "📅 Последние дни:\n"
+        text += "📅 *Последние дни:*\n"
         for day in stats['recent_days'][:5]:
             date_display = format_date_for_display(day['date'])
             text += f"• {date_display} ({day['count']} сообщений)\n"
@@ -92,20 +92,23 @@ def escape_markdown_v2(text: str) -> str:
     """Экранировать символы для MarkdownV2 в Telegram"""
     import re
     
-    # Символы, которые нужно экранировать для MarkdownV2
-    # Исключаем * и _ так как они используются для форматирования
-    escape_chars = r'\[\]()~`>#+-=|{}.!?'
+    # Символы, которые нужно экранировать для MarkdownV2, исключая те, что используются для форматирования
+    escape_chars = r'[]()~`>#+-=|{}.!'
     
-    # Используем регулярное выражение для экранирования
-    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
+    # Используем регулярное выражение для экранирования, но исключаем экранирование точек в обычном тексте
+    escaped_text = re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
+    
+    # Специальная обработка для точек только в начале строк, если они выглядят как часть нумерованного списка
+    lines = escaped_text.split('\n')
+    for i, line in enumerate(lines):
+        if line.strip() and re.match(r'^\s*\d+\.', line):
+            lines[i] = re.sub(r'(\d+)\.', r'\1\\.', line, 1)
+    return '\n'.join(lines)
 
 def format_summary_for_telegram(summary: str, date: str = None, chat_name: str = None) -> List[str]:
     """Форматировать суммаризацию для отправки в Telegram с MarkdownV2 разметкой"""
     # Сначала форматируем суммаризацию для MarkdownV2
     formatted_summary = format_summary_markdown_v2(summary)
-    
-    # Потом экранируем специальные символы для MarkdownV2
-    escaped_summary = escape_markdown_v2(formatted_summary)
     
     # Добавляем заголовок с датой, днем недели и названием чата
     if date:
@@ -119,7 +122,7 @@ def format_summary_for_telegram(summary: str, date: str = None, chat_name: str =
             # Форматируем дату для отображения
             formatted_date = date_obj.strftime('%d.%m.%Y')
             
-                     # Формируем компактный заголовок
+            # Формируем компактный заголовок
             if chat_name:
                 header = f"📱 *{chat_name}* • {formatted_date}, {weekday}\n\n"
             else:
@@ -135,11 +138,11 @@ def format_summary_for_telegram(summary: str, date: str = None, chat_name: str =
         else:
             header = "📋 *Информация для ознакомления*\n\n"
     
-    # Экранируем заголовок тоже
-    escaped_header = escape_markdown_v2(header)
+    # Комбинируем заголовок и текст без дополнительного экранирования
+    final_text = header + formatted_summary
     
     # Разбиваем на части
-    parts = format_message_for_telegram(escaped_header + escaped_summary)
+    parts = format_message_for_telegram(final_text)
     
     return parts
 

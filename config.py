@@ -21,8 +21,53 @@ load_env()
 
 # Telegram Bot Configuration
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "your_bot_token")
-GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY", "your_gigachat_key")
 VK_MAX_TOKEN = os.getenv("VK_MAX_TOKEN", "your_vk_max_token")
+
+# AI Provider Configuration
+AI_PROVIDERS = {
+    'gigachat': {
+        'api_key': os.getenv("GIGACHAT_API_KEY", "your_gigachat_key"),
+        'enabled': True,
+        'display_name': 'GigaChat',
+        'description': 'Sberbank GigaChat AI'
+    },
+    'chatgpt': {
+        'api_key': os.getenv("OPENAI_API_KEY", "your_openai_key"),
+        'enabled': True,
+        'display_name': 'ChatGPT',
+        'description': 'OpenAI ChatGPT'
+    },
+    'openrouter': {
+        'api_key': os.getenv("OPENROUTER_API_KEY", "your_openrouter_key"),
+        'enabled': True,
+        'display_name': 'OpenRouter',
+        'description': 'OpenRouter with DeepSeek'
+    },
+    'gemini': {
+        'api_key': os.getenv("GEMINI_API_KEY", "your_gemini_key"),
+        'enabled': True,
+        'display_name': 'Gemini',
+        'description': 'Google Gemini Pro'
+    }
+}
+
+# AI Provider Settings
+DEFAULT_AI_PROVIDER = os.getenv("DEFAULT_AI_PROVIDER", "gigachat")
+FALLBACK_PROVIDERS = os.getenv("FALLBACK_PROVIDERS", "chatgpt,gemini").split(',')
+AI_PROVIDER_TIMEOUT = int(os.getenv("AI_PROVIDER_TIMEOUT", "30"))
+AI_PROVIDER_MAX_RETRIES = int(os.getenv("AI_PROVIDER_MAX_RETRIES", "3"))
+
+# Reflection Settings
+ENABLE_REFLECTION = os.getenv("ENABLE_REFLECTION", "true").lower() == "true"
+REFLECTION_TIMEOUT = int(os.getenv("REFLECTION_TIMEOUT", "60"))
+AUTO_IMPROVE_SUMMARY = os.getenv("AUTO_IMPROVE_SUMMARY", "false").lower() == "true"
+
+# Debug reflection settings
+print(f"DEBUG: ENABLE_REFLECTION = {ENABLE_REFLECTION}")
+print(f"DEBUG: AUTO_IMPROVE_SUMMARY = {AUTO_IMPROVE_SUMMARY}")
+
+# Backward compatibility
+GIGACHAT_API_KEY = AI_PROVIDERS['gigachat']['api_key']
 
 # Database Configuration
 DATABASE_PATH = "bot_database.db"
@@ -34,5 +79,5 @@ MAX_MESSAGE_LENGTH = 4096  # Максимальная длина сообщен�
 MAX_MESSAGES_PER_LOAD = 1000  # Максимальное количество сообщений за одну загрузку
 
 # Logging Configuration
-LOG_LEVEL = "INFO"
+LOG_LEVEL = "DEBUG"
 LOG_FORMAT = "[%(asctime)s] [%(levelname)s] %(message)s"

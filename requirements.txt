@@ -2,3 +2,8 @@ python-max-client
 requests>=2.31.0
 python-telegram-bot>=22.0
 psutil>=5.9.0
+
+# AI Provider Dependencies
+openai>=1.0.0
+google-generativeai>=0.3.0
+httpx>=0.24.0

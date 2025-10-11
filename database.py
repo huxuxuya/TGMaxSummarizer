@@ -135,6 +135,9 @@ class DatabaseManager:
                 )
             """)
             
+            # AI Provider Tables
+            self._create_ai_provider_tables(cursor)
+            
             # Создание индексов для производительности
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat_date ON messages(vk_chat_id, date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)")
@@ -408,3 +411,219 @@ class DatabaseManager:
             """, (group_id, vk_chat_id, date))
             result = cursor.fetchone()
             return result[0] if result else None
+    
+    def _create_ai_provider_tables(self, cursor):
+        """Создать таблицы для AI провайдеров"""
+        # Пользовательские предпочтения AI провайдеров
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_ai_preferences (
+                user_id INTEGER PRIMARY KEY,
+                default_provider TEXT DEFAULT 'gigachat',
+                preferred_providers TEXT DEFAULT '["gigachat"]',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        """)
+        
+        # Отслеживание доступности провайдеров
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS provider_availability (
+                provider_name TEXT PRIMARY KEY,
+                is_available BOOLEAN DEFAULT TRUE,
+                last_check TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                error_count INTEGER DEFAULT 0,
+                rate_limit_until TIMESTAMP NULL,
+                last_error TEXT NULL
+            )
+        """)
+        
+        # Обновляем таблицу summaries для хранения информации о провайдере
+        try:
+            cursor.execute("ALTER TABLE summaries ADD COLUMN provider_name TEXT DEFAULT 'gigachat'")
+        except sqlite3.OperationalError:
+            pass  # Колонка уже существует
+        
+        try:
+            cursor.execute("ALTER TABLE summaries ADD COLUMN provider_version TEXT")
+        except sqlite3.OperationalError:
+            pass  # Колонка уже существует
+        
+        try:
+            cursor.execute("ALTER TABLE summaries ADD COLUMN processing_time REAL")
+        except sqlite3.OperationalError:
+            pass  # Колонка уже существует
+        
+        # Пользовательские настройки моделей OpenRouter
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_openrouter_models (
+                user_id INTEGER PRIMARY KEY,
+                selected_model TEXT DEFAULT 'deepseek/deepseek-chat-v3.1:free',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        """)
+        
+        # Создаем индексы для AI провайдеров
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_ai_preferences_user ON user_ai_preferences(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_provider_availability_name ON provider_availability(provider_name)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_summaries_provider ON summaries(provider_name)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_openrouter_models_user ON user_openrouter_models(user_id)")
+    
+    def add_user_ai_preference(self, user_id: int, default_provider: str = 'gigachat', preferred_providers: List[str] = None):
+        """Добавить или обновить предпочтения AI провайдера пользователя"""
+        if preferred_providers is None:
+            preferred_providers = ['gigachat']
+        
+        import json
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO user_ai_preferences 
+                (user_id, default_provider, preferred_providers, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            """, (user_id, default_provider, json.dumps(preferred_providers)))
+            conn.commit()
+    
+    def get_user_ai_preference(self, user_id: int) -> Optional[Dict]:
+        """Получить предпочтения AI провайдера пользователя"""
+        import json
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT default_provider, preferred_providers
+                FROM user_ai_preferences
+                WHERE user_id = ?
+            """, (user_id,))
+            result = cursor.fetchone()
+            
+            if result:
+                try:
+                    preferred_providers = json.loads(result[1]) if result[1] else ['gigachat']
+                except json.JSONDecodeError:
+                    preferred_providers = ['gigachat']
+                
+                return {
+                    'default_provider': result[0] or 'gigachat',
+                    'preferred_providers': preferred_providers
+                }
+            return None
+    
+    def update_provider_availability(self, provider_name: str, is_available: bool, error_count: int = 0, last_error: str = None):
+        """Обновить статус доступности провайдера"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO provider_availability 
+                (provider_name, is_available, last_check, error_count, last_error)
+                VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?)
+            """, (provider_name, is_available, error_count, last_error))
+            conn.commit()
+    
+    def get_provider_availability(self, provider_name: str = None) -> Dict:
+        """Получить статус доступности провайдеров"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            if provider_name:
+                cursor.execute("""
+                    SELECT provider_name, is_available, last_check, error_count, last_error
+                    FROM provider_availability
+                    WHERE provider_name = ?
+                """, (provider_name,))
+                result = cursor.fetchone()
+                
+                if result:
+                    return {
+                        'provider_name': result[0],
+                        'is_available': bool(result[1]),
+                        'last_check': result[2],
+                        'error_count': result[3],
+                        'last_error': result[4]
+                    }
+                return {}
+            else:
+                cursor.execute("""
+                    SELECT provider_name, is_available, last_check, error_count, last_error
+                    FROM provider_availability
+                    ORDER BY provider_name
+                """)
+                results = cursor.fetchall()
+                
+                availability = {}
+                for row in results:
+                    availability[row[0]] = {
+                        'is_available': bool(row[1]),
+                        'last_check': row[2],
+                        'error_count': row[3],
+                        'last_error': row[4]
+                    }
+                return availability
+    
+    def update_summary_with_provider_info(self, vk_chat_id: str, date: str, summary_type: str, 
+                                        provider_name: str, provider_version: str = None, 
+                                        processing_time: float = None):
+        """Обновить суммаризацию с информацией о провайдере"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE summaries 
+                SET provider_name = ?, provider_version = ?, processing_time = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE vk_chat_id = ? AND date = ? AND summary_type = ?
+            """, (provider_name, provider_version, processing_time, vk_chat_id, date, summary_type))
+            conn.commit()
+    
+    def get_summary_with_provider_info(self, vk_chat_id: str, date: str, summary_type: str = 'daily') -> Optional[Dict]:
+        """Получить суммаризацию с информацией о провайдере"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, vk_chat_id, date, summary_text, summary_type, 
+                       provider_name, provider_version, processing_time, created_at, updated_at
+                FROM summaries
+                WHERE vk_chat_id = ? AND date = ? AND summary_type = ?
+            """, (vk_chat_id, date, summary_type))
+            result = cursor.fetchone()
+            
+            if result:
+                return {
+                    'id': result[0],
+                    'vk_chat_id': result[1],
+                    'date': result[2],
+                    'summary_text': result[3],
+                    'summary_type': result[4],
+                    'provider_name': result[5] or 'gigachat',
+                    'provider_version': result[6],
+                    'processing_time': result[7],
+                    'created_at': result[8],
+                    'updated_at': result[9]
+                }
+            return None
+    
+    # OpenRouter Model Management
+    def set_user_openrouter_model(self, user_id: int, model_id: str) -> bool:
+        """Установить модель OpenRouter для пользователя"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO user_openrouter_models 
+                (user_id, selected_model, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+            """, (user_id, model_id))
+            conn.commit()
+            return True
+    
+    def get_user_openrouter_model(self, user_id: int) -> str:
+        """Получить выбранную модель OpenRouter для пользователя"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT selected_model FROM user_openrouter_models
+                WHERE user_id = ?
+            """, (user_id,))
+            result = cursor.fetchone()
+            
+            if result:
+                return result[0]
+            return 'deepseek/deepseek-chat-v3.1:free'  # Модель по умолчанию
