@@ -135,7 +135,7 @@ class VKMaxIntegration:
                     batch_count += 1
                     
                     # Загружаем порцию сообщений
-                    response = get_chat_messages(
+                    response = await get_chat_messages(
                         self.client, 
                         int(chat_id), 
                         count=100, 
@@ -248,7 +248,7 @@ class VKMaxIntegration:
             return {}
         
         try:
-            response = resolve_users(self.client, list(user_ids))
+            response = await resolve_users(self.client, list(user_ids))
             if "payload" not in response or "contacts" not in response["payload"]:
                 logger.warning(f"⚠️  Нет данных в ответе resolve_users для {user_ids}")
                 return {}

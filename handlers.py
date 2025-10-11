@@ -123,6 +123,14 @@ class BotHandlers:
         elif data.startswith("select_date_"):
             date = data.split("_")[2]
             await self._handle_date_selection(update, context, date)
+        elif data.startswith("generate_new_summary_"):
+            chat_id = data.split("_")[3]
+            date = data.split("_")[4]
+            await self._handle_generate_new_summary(update, context, chat_id, date)
+        elif data.startswith("view_existing_summary_"):
+            chat_id = data.split("_")[3]
+            date = data.split("_")[4]
+            await self._handle_view_existing_summary(update, context, chat_id, date)
         elif data == "list_chats":
             await self._handle_list_chats(update, context)
         elif data.startswith("select_chat_"):
@@ -238,13 +246,32 @@ class BotHandlers:
         chats = self.db.get_group_vk_chats(group_id)
         
         if chats:
-            # Если чаты есть, сразу показываем их список
-            keyboard = chat_list_keyboard(chats)
-            await update.callback_query.edit_message_text(
-                f"✅ Выбрана группа: {group_name}\n\n"
-                f"📋 Список чатов VK MAX:",
-                reply_markup=keyboard
-            )
+            # Если чаты есть, проверяем количество
+            if len(chats) == 1:
+                # Если только один чат, автоматически переходим к нему
+                chat_id = chats[0]['chat_id']
+                chat_name = chats[0].get('chat_name', f'Чат {chat_id}')
+                
+                # Показываем сообщение о автоматическом выборе
+                await update.callback_query.edit_message_text(
+                    f"✅ Выбрана группа: {group_name}\n\n"
+                    f"🎯 Автоматически выбран единственный чат: {chat_name}\n"
+                    f"⏳ Загружаем информацию...",
+                    reply_markup=None
+                )
+                
+                # Небольшая задержка для лучшего UX
+                await asyncio.sleep(1)
+                
+                await self._handle_chat_selection(update, context, chat_id)
+            else:
+                # Если несколько чатов, показываем их список
+                keyboard = chat_list_keyboard(chats)
+                await update.callback_query.edit_message_text(
+                    f"✅ Выбрана группа: {group_name}\n\n"
+                    f"📋 Список чатов VK MAX:",
+                    reply_markup=keyboard
+                )
         else:
             # Если чатов нет, показываем меню управления
             keyboard = chat_management_keyboard()
@@ -419,6 +446,24 @@ class BotHandlers:
             await update.callback_query.edit_message_text(
                 "❌ Чат не выбран",
                 reply_markup=back_keyboard()
+            )
+            return
+        
+        # Проверяем, есть ли уже суммаризация за эту дату
+        existing_summary = self.db.get_summary(chat_id, date)
+        
+        if existing_summary:
+            # Если суммаризация уже есть, предлагаем выбор
+            keyboard = [
+                [InlineKeyboardButton("🔄 Сгенерировать новую", callback_data=f"generate_new_summary_{chat_id}_{date}")],
+                [InlineKeyboardButton("👁️ Посмотреть последнюю", callback_data=f"view_existing_summary_{chat_id}_{date}")],
+                [InlineKeyboardButton("🔙 Назад", callback_data=f"select_chat_{chat_id}")]
+            ]
+            
+            await update.callback_query.edit_message_text(
+                f"📊 Суммаризация за {date} уже существует\n\n"
+                f"Выберите действие:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
             return
         
@@ -694,7 +739,7 @@ class BotHandlers:
             chat_name = chat_info.get('chat_name', f'Чат {chat_id}') if chat_info else f'Чат {chat_id}'
             
             # Форматируем сообщение для публикации
-            from telegram_bot.utils import format_summary_for_telegram
+            from utils import format_summary_for_telegram
             
             # Разбиваем на части если нужно
             message_parts = format_summary_for_telegram(summary, date, chat_name)
@@ -906,3 +951,101 @@ class BotHandlers:
         finally:
             # Очищаем состояние
             context.user_data.pop('waiting_for_chat_id', None)
+    
+    async def _handle_generate_new_summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: str, date: str):
+        """Обработка генерации новой суммаризации"""
+        await update.callback_query.edit_message_text(
+            f"🔄 Генерируем новую суммаризацию за {date}...\n\n"
+            "Это может занять некоторое время.",
+            reply_markup=cancel_keyboard()
+        )
+        
+        try:
+            # Получаем сообщения за выбранную дату
+            messages = self.db.get_messages_by_date(chat_id, date)
+            
+            if not messages:
+                await update.callback_query.edit_message_text(
+                    f"❌ Нет сообщений за {date}",
+                    reply_markup=back_keyboard()
+                )
+                return
+            
+            # Анализируем сообщения
+            summary = self.analyzer.analyze_chat_by_date(messages)
+            
+            if summary:
+                # Сохраняем новую суммаризацию в БД (перезаписываем существующую)
+                self.db.save_summary(chat_id, date, summary)
+                
+                # Показываем результат с Markdown форматированием
+                text = f"📊 **Новый анализ чата за {date}**\n\n"
+                text += f"📈 **Статистика:**\n"
+                text += f"• Сообщений: {len(messages)}\n"
+                text += f"• Дата: {date}\n\n"
+                text += f"📝 **Резюме:**\n{summary}"
+                
+                keyboard = [
+                    [InlineKeyboardButton("📤 Вывести в группу", callback_data=f"publish_summary_{chat_id}_{date}")],
+                    [InlineKeyboardButton("🔙 Назад", callback_data=f"select_chat_{chat_id}")]
+                ]
+                
+                await update.callback_query.edit_message_text(
+                    text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            else:
+                await update.callback_query.edit_message_text(
+                    "❌ Не удалось сгенерировать суммаризацию",
+                    reply_markup=back_keyboard()
+                )
+                
+        except Exception as e:
+            logger.error(f"Ошибка генерации новой суммаризации: {e}")
+            await update.callback_query.edit_message_text(
+                f"❌ Ошибка: {str(e)}",
+                reply_markup=back_keyboard()
+            )
+    
+    async def _handle_view_existing_summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: str, date: str):
+        """Обработка просмотра существующей суммаризации"""
+        try:
+            # Получаем существующую суммаризацию
+            summary = self.db.get_summary(chat_id, date)
+            
+            if not summary:
+                await update.callback_query.edit_message_text(
+                    f"❌ Суммаризация за {date} не найдена",
+                    reply_markup=back_keyboard()
+                )
+                return
+            
+            # Получаем статистику для отображения
+            messages = self.db.get_messages_by_date(chat_id, date)
+            
+            # Показываем существующую суммаризацию
+            text = f"📊 **Существующая суммаризация за {date}**\n\n"
+            text += f"📈 **Статистика:**\n"
+            text += f"• Сообщений: {len(messages) if messages else 0}\n"
+            text += f"• Дата: {date}\n\n"
+            text += f"📝 **Резюме:**\n{summary}"
+            
+            keyboard = [
+                [InlineKeyboardButton("🔄 Сгенерировать новую", callback_data=f"generate_new_summary_{chat_id}_{date}")],
+                [InlineKeyboardButton("📤 Вывести в группу", callback_data=f"publish_summary_{chat_id}_{date}")],
+                [InlineKeyboardButton("🔙 Назад", callback_data=f"select_chat_{chat_id}")]
+            ]
+            
+            await update.callback_query.edit_message_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.MARKDOWN
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка просмотра существующей суммаризации: {e}")
+            await update.callback_query.edit_message_text(
+                f"❌ Ошибка: {str(e)}",
+                reply_markup=back_keyboard()
+            )
