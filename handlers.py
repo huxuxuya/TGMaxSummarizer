@@ -761,6 +761,9 @@ class BotHandlers:
             return
         
         try:
+            # Импортируем TelegramFormatter для умного экранирования
+            from telegram_formatter import TelegramFormatter
+            
             # Получаем суммаризацию из БД
             summary = self.db.get_summary(chat_id, date)
             
@@ -828,11 +831,12 @@ class BotHandlers:
                         # Обновляем существующее сообщение
                         try:
                             logger.info(f"🔄 Обновляем сообщение {i+1} (ID: {existing_message_ids[i]}) в группе {group_id}")
-                            # Текст уже отформатирован в format_summary_for_telegram
+                            # Применяем умное экранирование для MarkdownV2
+                            escaped_part = TelegramFormatter.smart_escape_markdown_v2(part)
                             await context.bot.edit_message_text(
                                 chat_id=group_id,
                                 message_id=existing_message_ids[i],
-                                text=part,
+                                text=escaped_part,
                                 parse_mode=ParseMode.MARKDOWN_V2
                             )
                         except Exception as e:
@@ -849,9 +853,12 @@ class BotHandlers:
                                 logger.warning(f"⚠️ Сообщение {existing_message_ids[i]} было удалено, отправляем новое")
                                 logger.info(f"🔍 Текст ошибки: '{str(e)}'")
                                 try:
+                                    # Применяем умное экранирование для MarkdownV2
+                                    from telegram_formatter import TelegramFormatter
+                                    escaped_part = TelegramFormatter.smart_escape_markdown_v2(part)
                                     message = await context.bot.send_message(
                                         chat_id=group_id,
-                                        text=part,
+                                        text=escaped_part,
                                         parse_mode=ParseMode.MARKDOWN_V2,
                                         disable_notification=True
                                     )
@@ -880,10 +887,11 @@ class BotHandlers:
                         # Отправляем новое сообщение
                         try:
                             logger.info(f"📤 Отправляем новое сообщение {i+1} в группу {group_id}")
-                            # Текст уже отформатирован в format_summary_for_telegram
+                            # Применяем умное экранирование для MarkdownV2
+                            escaped_part = TelegramFormatter.smart_escape_markdown_v2(part)
                             message = await context.bot.send_message(
                                 chat_id=group_id,
-                                text=part,
+                                text=escaped_part,
                                 parse_mode=ParseMode.MARKDOWN_V2,
                                 disable_notification=True
                             )
