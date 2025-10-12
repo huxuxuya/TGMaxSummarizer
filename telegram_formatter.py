@@ -644,3 +644,119 @@ class TelegramFormatter:
             result = result.replace(char, f'\\{char}')
         
         return result
+    
+    @staticmethod
+    def markdown_to_html_universal(markdown_text: str, telegram_safe: bool = True) -> str:
+        """
+        Универсальное преобразование Markdown в HTML с использованием библиотеки markdown
+        
+        Args:
+            markdown_text: Текст в формате Markdown
+            telegram_safe: Если True, экранирует HTML символы для безопасного использования в Telegram
+            
+        Returns:
+            HTML текст, готовый для использования в Telegram
+        """
+        try:
+            import markdown
+            
+            # Создаем экземпляр markdown с настройками для Telegram
+            md = markdown.Markdown(
+                extensions=[
+                    'markdown.extensions.extra',  # Включает таблицы, определения и другие расширения
+                    'markdown.extensions.codehilite',  # Подсветка синтаксиса кода
+                    'markdown.extensions.fenced_code',  # Fenced code blocks
+                    'markdown.extensions.tables',  # Таблицы
+                    'markdown.extensions.toc',  # Table of contents
+                ],
+                extension_configs={
+                    'markdown.extensions.codehilite': {
+                        'css_class': 'highlight'
+                    }
+                }
+            )
+            
+            # Преобразуем Markdown в HTML
+            html = md.convert(markdown_text)
+            
+            if telegram_safe:
+                # Конвертируем стандартные HTML теги в теги, поддерживаемые Telegram
+                # Telegram поддерживает: <b>, <i>, <u>, <s>, <a>, <code>, <pre>
+                html = html.replace('<strong>', '<b>').replace('</strong>', '</b>')
+                html = html.replace('<em>', '<i>').replace('</em>', '</i>')
+                html = html.replace('<b>', '<b>').replace('</b>', '</b>')  # Уже правильный
+                html = html.replace('<i>', '<i>').replace('</i>', '</i>')  # Уже правильный
+                
+                # Конвертируем заголовки в жирный текст
+                html = re.sub(r'<h[1-6][^>]*>(.*?)</h[1-6]>', r'<b>\1</b>', html)
+                
+                # Конвертируем списки в простой текст с маркерами
+                html = re.sub(r'<ul[^>]*>', '', html)
+                html = re.sub(r'</ul>', '', html)
+                html = re.sub(r'<ol[^>]*>', '', html)
+                html = re.sub(r'</ol>', '', html)
+                html = re.sub(r'<li[^>]*>', '• ', html)
+                html = re.sub(r'</li>', '\n', html)
+                
+                # Конвертируем параграфы в простой текст
+                html = re.sub(r'<p[^>]*>', '', html)
+                html = re.sub(r'</p>', '\n\n', html)
+                
+                # Убираем лишние переносы строк
+                html = re.sub(r'\n{3,}', '\n\n', html)
+                html = html.strip()
+                
+                # Экранируем HTML символы для безопасного использования в Telegram
+                html = TelegramFormatter.escape_html(html)
+                
+                # Восстанавливаем теги форматирования, которые поддерживает Telegram
+                allowed_tags = ['b', 'i', 'u', 's', 'a', 'code', 'pre']
+                for tag in allowed_tags:
+                    html = html.replace(f'&lt;{tag}&gt;', f'<{tag}>')
+                    html = html.replace(f'&lt;/{tag}&gt;', f'</{tag}>')
+                
+                # Восстанавливаем атрибуты для ссылок
+                html = html.replace('&lt;a href=', '<a href=')
+                html = html.replace('&gt;', '>')
+            
+            return html
+            
+        except ImportError:
+            logger.warning("Библиотека markdown не установлена, используем fallback")
+            return TelegramFormatter._markdown_to_html_fallback(markdown_text)
+        except Exception as e:
+            logger.error(f"Ошибка преобразования Markdown в HTML: {e}")
+            return TelegramFormatter._markdown_to_html_fallback(markdown_text)
+    
+    @staticmethod
+    def _markdown_to_html_fallback(markdown_text: str) -> str:
+        """
+        Fallback функция для преобразования Markdown в HTML без внешних библиотек
+        Обрабатывает только основные элементы
+        """
+        html = markdown_text
+        
+        # Заголовки - конвертируем в жирный текст для Telegram
+        html = re.sub(r'^### (.*?)$', r'<b>\1</b>', html, flags=re.MULTILINE)
+        html = re.sub(r'^## (.*?)$', r'<b>\1</b>', html, flags=re.MULTILINE)
+        html = re.sub(r'^# (.*?)$', r'<b>\1</b>', html, flags=re.MULTILINE)
+        
+        # Жирный и курсивный текст
+        html = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', html)
+        html = re.sub(r'\*(.*?)\*', r'<i>\1</i>', html)
+        
+        # Списки
+        html = re.sub(r'^- (.*?)$', r'• \1', html, flags=re.MULTILINE)
+        
+        # Код
+        html = re.sub(r'`(.*?)`', r'<code>\1</code>', html)
+        
+        # Экранируем HTML символы
+        html = TelegramFormatter.escape_html(html)
+        
+        # Восстанавливаем теги форматирования
+        html = html.replace('&lt;b&gt;', '<b>').replace('&lt;/b&gt;', '</b>')
+        html = html.replace('&lt;i&gt;', '<i>').replace('&lt;/i&gt;', '</i>')
+        html = html.replace('&lt;code&gt;', '<code>').replace('&lt;/code&gt;', '</code>')
+        
+        return html

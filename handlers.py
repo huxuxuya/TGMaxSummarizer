@@ -101,12 +101,16 @@ class BotHandlers:
         await query.answer()
         
         data = query.data
+        logger.info(f"🔍 Получен callback: {data}")
         
         if data == "manage_chats":
+            logger.info("🔍 Обрабатываем manage_chats")
             await self._handle_manage_chats(update, context)
         elif data == "statistics":
+            logger.info("🔍 Обрабатываем statistics")
             await self._handle_statistics(update, context)
         elif data == "settings":
+            logger.info("🔍 Обрабатываем settings")
             await self._handle_settings(update, context)
         elif data.startswith("select_group_"):
             group_id = int(data.split("_")[2])
@@ -160,7 +164,35 @@ class BotHandlers:
         elif data.startswith("check_summary_"):
             chat_id = data.split("_")[2]
             await self._handle_check_summary(update, context, chat_id)
+        elif data.startswith("publish_summary_html_"):
+            logger.info(f"🔍 Обрабатываем HTML callback: {data}")
+            parts = data.split("_")
+            logger.info(f"🔍 Части callback: {parts}, количество: {len(parts)}")
+            if len(parts) == 5:
+                # Формат с датой для HTML: publish_summary_html_chat_id_date
+                chat_id = parts[3]
+                date = parts[4]
+                logger.info(f"🔍 HTML публикация: chat_id={chat_id}, date={date}")
+                try:
+                    await self._handle_publish_summary_html_with_date(update, context, chat_id, date)
+                except Exception as e:
+                    logger.error(f"❌ Ошибка в HTML публикации: {e}")
+                    import traceback
+                    logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            elif len(parts) == 4:
+                # Старый формат без даты для HTML: publish_summary_html_chat_id
+                chat_id = parts[3]
+                logger.info(f"🔍 HTML публикация (без даты): chat_id={chat_id}")
+                try:
+                    await self._handle_publish_summary_html(update, context, chat_id)
+                except Exception as e:
+                    logger.error(f"❌ Ошибка в HTML публикации (без даты): {e}")
+                    import traceback
+                    logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            else:
+                logger.error(f"❌ Неожиданный формат HTML callback: {data}, частей: {len(parts)}")
         elif data.startswith("publish_summary_"):
+            logger.info(f"🔍 Обрабатываем обычный publish_summary: {data}")
             parts = data.split("_")
             if len(parts) == 3:
                 # Старый формат без даты
@@ -966,6 +998,177 @@ class BotHandlers:
                 reply_markup=back_keyboard()
             )
     
+    async def _handle_publish_summary_html_with_date(self, update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: str, date: str):
+        """Обработка публикации суммаризации в HTML формате с датой"""
+        logger.info(f"🚀 Начинаем HTML публикацию: chat_id={chat_id}, date={date}")
+        group_id = context.user_data.get('selected_group_id')
+        logger.info(f"🔍 Выбранная группа: {group_id}")
+        
+        if not group_id:
+            await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                "❌ Группа не выбрана",
+                reply_markup=back_keyboard()
+            )
+            return
+        
+        try:
+            # Получаем суммаризацию из БД
+            summary = self.db.get_summary(chat_id, date)
+            
+            if not summary:
+                await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                    f"❌ Суммаризация за {date} не найдена\n\n"
+                    "Сначала создайте суммаризацию для этой даты.",
+                    reply_markup=back_keyboard()
+                )
+                return
+            
+            # Получаем название чата из БД
+            chat_info = self.db.get_vk_chat_info(chat_id)
+            chat_name = chat_info.get('chat_name', f'Чат {chat_id}') if chat_info else f'Чат {chat_id}'
+            
+            # Форматируем сообщение для публикации в HTML с универсальным преобразованием
+            from utils import format_summary_for_telegram_html_universal
+            from telegram_formatter import TelegramFormatter
+            
+            logger.info(f"📝 Текст из БД для HTML публикации: {summary[:200]}...")
+            
+            # Используем универсальное преобразование Markdown в HTML
+            formatted_summary = TelegramFormatter.markdown_to_html_universal(summary, telegram_safe=True)
+            
+            # Создаем компактный заголовок
+            if date:
+                from datetime import datetime
+                try:
+                    # Парсим дату
+                    date_obj = datetime.strptime(date, '%Y-%m-%d')
+                    # Получаем день недели на русском (сокращенно)
+                    weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+                    weekday = weekdays[date_obj.weekday()]
+                    # Форматируем дату для отображения
+                    formatted_date = date_obj.strftime('%d.%m.%Y')
+                    
+                    # Формируем компактный заголовок
+                    if chat_name:
+                        escaped_chat_name = TelegramFormatter.escape_html(chat_name)
+                        escaped_date = TelegramFormatter.escape_html(formatted_date)
+                        escaped_weekday = TelegramFormatter.escape_html(weekday)
+                        header = f"📱 <b>{escaped_chat_name}</b> • {escaped_date}, {escaped_weekday}"
+                    else:
+                        escaped_date = TelegramFormatter.escape_html(formatted_date)
+                        escaped_weekday = TelegramFormatter.escape_html(weekday)
+                        header = f"📋 <b>{escaped_date}, {escaped_weekday}</b>"
+                except:
+                    if chat_name:
+                        escaped_chat_name = TelegramFormatter.escape_html(chat_name)
+                        escaped_date = TelegramFormatter.escape_html(date)
+                        header = f"📱 <b>{escaped_chat_name}</b> • {escaped_date}"
+                    else:
+                        escaped_date = TelegramFormatter.escape_html(date)
+                        header = f"📋 <b>{escaped_date}</b>"
+            else:
+                if chat_name:
+                    escaped_chat_name = TelegramFormatter.escape_html(chat_name)
+                    header = f"📱 <b>{escaped_chat_name}</b>"
+                else:
+                    header = "📋 <b>Информация</b>"
+            
+            # Создаем collapsed block quotation для суммаризации
+            collapsed_summary = f'<blockquote expandable>\n{formatted_summary}\n</blockquote>'
+            
+            # Комбинируем заголовок и collapsed суммаризацию без лишних отступов
+            final_text = header + '\n' + collapsed_summary
+            
+            # Разбиваем на части
+            from utils import format_message_for_telegram
+            message_parts = format_message_for_telegram(final_text)
+            
+            logger.info(f"📝 Отформатированные HTML части для публикации: {len(message_parts)} частей")
+            logger.info(f"📝 Первая HTML часть: {message_parts[0][:200]}...")
+            
+            # Отправляем в группу
+            logger.info(f"📤 Публикуем HTML суммаризацию в группу {group_id} для чата {chat_id} за {date}")
+            await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                f"📤 Публикуем HTML суммаризацию в группу...\n\n"
+                f"Чат: {chat_id}\n"
+                f"Дата: {date}\n"
+                f"Группа: {group_id}",
+                reply_markup=cancel_keyboard()
+            )
+            
+            # Отправляем сообщения в группу
+            sent_message_ids = []
+            for i, part in enumerate(message_parts):
+                try:
+                    logger.info(f"📤 Отправляем HTML сообщение {i+1} в группу {group_id}")
+                    message = await context.bot.send_message(
+                        chat_id=group_id,
+                        text=part,
+                        parse_mode=ParseMode.HTML,
+                        disable_notification=True
+                    )
+                    sent_message_ids.append(message.message_id)
+                    logger.info(f"✅ Отправлено HTML сообщение {i+1} (ID: {message.message_id})")
+                    
+                    if i < len(message_parts) - 1:
+                        await asyncio.sleep(0.5)  # Пауза между сообщениями
+                        
+                except Exception as e:
+                    logger.error(f"Ошибка отправки HTML сообщения {i+1}: {e}")
+                    if "can't parse entities" in str(e).lower():
+                        # Fallback to plain text
+                        message = await context.bot.send_message(
+                            chat_id=group_id,
+                            text=part,
+                            disable_notification=True
+                        )
+                        sent_message_ids.append(message.message_id)
+                        logger.info(f"✅ Отправлено HTML сообщение {i+1} (ID: {message.message_id}) в plain text")
+                    else:
+                        raise e
+            
+            await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                f"✅ HTML суммаризация опубликована в группу!\n\n"
+                f"📊 Чат: {chat_id}\n"
+                f"📅 Дата: {date}\n"
+                f"📝 Частей: {len(message_parts)}\n"
+                f"📄 Формат: HTML с collapsed block quotation",
+                reply_markup=back_keyboard()
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка публикации HTML суммаризации: {e}")
+            await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                f"❌ Ошибка публикации HTML: {str(e)}",
+                reply_markup=back_keyboard()
+            )
+    
+    async def _handle_publish_summary_html(self, update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: str):
+        """Обработка публикации суммаризации в HTML формате (старый формат без даты)"""
+        # Получаем последнюю дату с суммаризацией
+        summaries = self.db.get_summaries(chat_id)
+        
+        if not summaries:
+            await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                f"❌ Нет суммаризаций для чата {chat_id}\n\n"
+                "Сначала создайте суммаризацию.",
+                reply_markup=back_keyboard()
+            )
+            return
+        
+        # Берем самую свежую суммаризацию
+        latest_summary = summaries[0]
+        date = latest_summary['date']
+        
+        # Вызываем обработчик с датой
+        await self._handle_publish_summary_html_with_date(update, context, chat_id, date)
+    
     async def _handle_back_to_main(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка возврата в главное меню"""
         keyboard = main_menu_keyboard()
@@ -1233,6 +1436,7 @@ class BotHandlers:
                 
                 keyboard = [
                     [InlineKeyboardButton("📤 Вывести в группу", callback_data=f"publish_summary_{chat_id}_{date}")],
+                    [InlineKeyboardButton("📤 Вывести в группу (HTML)", callback_data=f"publish_summary_html_{chat_id}_{date}")],
                     [InlineKeyboardButton("🔙 Назад", callback_data=f"select_chat_{chat_id}")]
                 ]
                 
@@ -1288,6 +1492,7 @@ class BotHandlers:
             keyboard = [
                 [InlineKeyboardButton("🔄 Сгенерировать новую", callback_data=f"generate_new_summary_{chat_id}_{date}")],
                 [InlineKeyboardButton("📤 Вывести в группу", callback_data=f"publish_summary_{chat_id}_{date}")],
+                [InlineKeyboardButton("📤 Вывести в группу (HTML)", callback_data=f"publish_summary_html_{chat_id}_{date}")],
                 [InlineKeyboardButton("🔙 Назад", callback_data=f"select_chat_{chat_id}")]
             ]
             
@@ -2129,7 +2334,8 @@ class BotHandlers:
                 
                 # Создаем клавиатуру заранее
                 keyboard = [
-                    [InlineKeyboardButton("📤 Вывести в группу", callback_data=f"publish_summary_{chat_id}_{date}")]
+                    [InlineKeyboardButton("📤 Вывести в группу", callback_data=f"publish_summary_{chat_id}_{date}")],
+                    [InlineKeyboardButton("📤 Вывести в группу (HTML)", callback_data=f"publish_summary_html_{chat_id}_{date}")]
                 ]
                 
                 # Форматируем результат анализа

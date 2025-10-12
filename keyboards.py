@@ -61,6 +61,7 @@ def chat_settings_keyboard(vk_chat_id: str):
         [InlineKeyboardButton("🔄 Загрузить сообщения", callback_data=f"load_messages_{vk_chat_id}")],
         [InlineKeyboardButton("📋 Проверить суммаризацию", callback_data=f"check_summary_{vk_chat_id}")],
         [InlineKeyboardButton("📤 Вывести в группу", callback_data=f"publish_summary_{vk_chat_id}")],
+        [InlineKeyboardButton("📤 Вывести в группу (HTML)", callback_data=f"publish_summary_html_{vk_chat_id}")],
         [InlineKeyboardButton("🔙 Назад", callback_data="back_to_manage_chats")]
     ]
     return InlineKeyboardMarkup(keyboard)
