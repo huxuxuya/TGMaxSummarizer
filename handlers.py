@@ -885,25 +885,30 @@ class BotHandlers:
                                 logger.warning(f"⚠️ Сообщение {existing_message_ids[i]} было удалено, отправляем новое")
                                 logger.info(f"🔍 Текст ошибки: '{str(e)}'")
                                 try:
-                                    # Применяем умное экранирование для MarkdownV2
-                                    from telegram_formatter import TelegramFormatter
-                                    escaped_part = TelegramFormatter.smart_escape_markdown_v2(part)
-                                    message = await context.bot.send_message(
+                                    # Используем безопасный метод отправки
+                                    success = await TelegramMessageSender.safe_send_message(
+                                        bot=context.bot,
                                         chat_id=group_id,
-                                        text=escaped_part,
+                                        text=part,
                                         parse_mode=ParseMode.MARKDOWN_V2,
                                         disable_notification=True
                                     )
+                                    if success:
+                                        message = {"message_id": f"msg_{i+1}"}  # Приблизительный ID
                                     sent_message_ids.append(message.message_id)
                                     logger.info(f"✅ Отправлено новое сообщение {i+1} (ID: {message.message_id}) вместо удаленного")
                                 except Exception as send_e:
                                     if "can't parse entities" in str(send_e).lower():
                                         # Fallback to plain text
-                                        message = await context.bot.send_message(
+                                        success = await TelegramMessageSender.safe_send_message(
+                                            bot=context.bot,
                                             chat_id=group_id,
                                             text=part,
+                                            parse_mode=None,
                                             disable_notification=True
                                         )
+                                        if success:
+                                            message = {"message_id": f"msg_{i+1}"}
                                         sent_message_ids.append(message.message_id)
                                         logger.info(f"✅ Отправлено новое сообщение {i+1} (ID: {message.message_id}) в plain text вместо удаленного")
                                     else:
@@ -919,22 +924,28 @@ class BotHandlers:
                         # Отправляем новое сообщение
                         try:
                             logger.info(f"📤 Отправляем новое сообщение {i+1} в группу {group_id}")
-                            # Применяем умное экранирование для MarkdownV2
-                            escaped_part = TelegramFormatter.smart_escape_markdown_v2(part)
-                            message = await context.bot.send_message(
+                            # Используем безопасный метод отправки
+                            success = await TelegramMessageSender.safe_send_message(
+                                bot=context.bot,
                                 chat_id=group_id,
-                                text=escaped_part,
+                                text=part,
                                 parse_mode=ParseMode.MARKDOWN_V2,
                                 disable_notification=True
                             )
+                            if success:
+                                message = {"message_id": f"msg_{i+1}"}
                         except Exception as e:
                             if "can't parse entities" in str(e).lower():
                                 # Fallback to plain text
-                                message = await context.bot.send_message(
+                                success = await TelegramMessageSender.safe_send_message(
+                                    bot=context.bot,
                                     chat_id=group_id,
                                     text=part,
+                                    parse_mode=None,
                                     disable_notification=True
                                 )
+                                if success:
+                                    message = {"message_id": f"msg_{i+1}"}
                             else:
                                 raise e
                         sent_message_ids.append(message.message_id)
@@ -950,12 +961,15 @@ class BotHandlers:
                         logger.warning(f"⚠️ Сообщение было удалено, пытаемся отправить новое")
                         try:
                             # Отправляем новое сообщение
-                            message = await context.bot.send_message(
+                            success = await TelegramMessageSender.safe_send_message(
+                                bot=context.bot,
                                 chat_id=group_id,
                                 text=part,
                                 parse_mode=ParseMode.MARKDOWN_V2,
                                 disable_notification=True
                             )
+                            if success:
+                                message = {"message_id": f"msg_{i+1}"}
                             sent_message_ids.append(message.message_id)
                             logger.info(f"✅ Отправлено новое сообщение {i+1} (ID: {message.message_id}) вместо удаленного")
                         except Exception as send_e:
@@ -1075,11 +1089,15 @@ class BotHandlers:
                 else:
                     header = "📋 <b>Информация</b>"
             
-            # Создаем collapsed block quotation для суммаризации
-            collapsed_summary = f'<blockquote expandable>\n{formatted_summary}\n</blockquote>'
+            # Создаем collapsed block quotation для суммаризации (без HTML тегов внутри)
+            # Убираем HTML теги из formatted_summary для collapsed block quotation
+            plain_summary = formatted_summary.replace('<b>', '').replace('</b>', '').replace('<i>', '').replace('</i>', '')
+            collapsed_summary = f'<blockquote expandable>\n{plain_summary}\n</blockquote>'
             
             # Комбинируем заголовок и collapsed суммаризацию без лишних отступов
             final_text = header + '\n' + collapsed_summary
+            
+            logger.info(f"📝 Итоговый HTML текст: {final_text[:300]}...")
             
             # Разбиваем на части
             from utils import format_message_for_telegram
@@ -1104,31 +1122,39 @@ class BotHandlers:
             for i, part in enumerate(message_parts):
                 try:
                     logger.info(f"📤 Отправляем HTML сообщение {i+1} в группу {group_id}")
-                    message = await context.bot.send_message(
-                        chat_id=group_id,
-                        text=part,
-                        parse_mode=ParseMode.HTML,
-                        disable_notification=True
-                    )
-                    sent_message_ids.append(message.message_id)
-                    logger.info(f"✅ Отправлено HTML сообщение {i+1} (ID: {message.message_id})")
+                    logger.info(f"📝 HTML текст для отправки: {part[:200]}...")
+                    
+                    # Отправляем напрямую с HTML парсингом
+                    try:
+                        message = await context.bot.send_message(
+                            chat_id=group_id,
+                            text=part,
+                            parse_mode=ParseMode.HTML,
+                            disable_notification=True
+                        )
+                        sent_message_ids.append(message.message_id)
+                        logger.info(f"✅ Отправлено HTML сообщение {i+1} (ID: {message.message_id})")
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка отправки HTML сообщения {i+1}: {e}")
+                        if "can't parse entities" in str(e).lower():
+                            # Fallback to plain text
+                            logger.warning(f"🔄 Fallback: отправляем как plain text")
+                            message = await context.bot.send_message(
+                                chat_id=group_id,
+                                text=part,
+                                disable_notification=True
+                            )
+                            sent_message_ids.append(message.message_id)
+                            logger.info(f"✅ Отправлено HTML сообщение {i+1} (ID: {message.message_id}) в plain text")
+                        else:
+                            raise e
                     
                     if i < len(message_parts) - 1:
                         await asyncio.sleep(0.5)  # Пауза между сообщениями
                         
                 except Exception as e:
                     logger.error(f"Ошибка отправки HTML сообщения {i+1}: {e}")
-                    if "can't parse entities" in str(e).lower():
-                        # Fallback to plain text
-                        message = await context.bot.send_message(
-                            chat_id=group_id,
-                            text=part,
-                            disable_notification=True
-                        )
-                        sent_message_ids.append(message.message_id)
-                        logger.info(f"✅ Отправлено HTML сообщение {i+1} (ID: {message.message_id}) в plain text")
-                    else:
-                        raise e
+                    raise e
             
             await TelegramMessageSender.safe_edit_message_text(
                 update.callback_query,

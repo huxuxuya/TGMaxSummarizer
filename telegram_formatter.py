@@ -595,10 +595,11 @@ class TelegramFormatter:
             return text
         
         # Символы, которые нужно экранировать для MarkdownV2
-        # НЕ экранируем: *, _, ` (нужны для форматирования)
-        # Экранируем: [, ], (, ), ~, ., !, -, +, =, |, {, }, # (могут вызвать проблемы)
+        # НЕ экранируем: *, ` (нужны для форматирования)
+        # Экранируем: [, ], (, ), ~, ., !, -, +, =, |, {, }, #, _ (могут вызвать проблемы)
         # > обрабатываем контекстно - не экранируем в начале строки (блоки цитат)
-        problematic_chars = ['[', ']', '(', ')', '~', '.', '!', '-', '+', '=', '|', '{', '}', '#']
+        # _ экранируем только если он не используется для форматирования
+        problematic_chars = ['[', ']', '(', ')', '~', '.', '!', '-', '+', '=', '|', '{', '}', '#', '_']
         
         # Обрабатываем построчно для сохранения блоков цитат
         lines = text.split('\n')
@@ -639,9 +640,32 @@ class TelegramFormatter:
         # Экранируем обратные слеши в первую очередь
         result = result.replace('\\', '\\\\')
         
-        # Экранируем указанные символы
+        # Специальная обработка для символа _
+        if '_' in chars_to_escape:
+            # Экранируем _ только если он не используется для форматирования
+            # Ищем паттерны _текст_ и не экранируем их
+            import re
+            # Временно заменяем форматирование _текст_ на плейсхолдеры
+            placeholders = []
+            pattern = r'_([^_]+)_'
+            matches = re.finditer(pattern, result)
+            
+            for i, match in enumerate(matches):
+                placeholder = f"__PLACEHOLDER_{i}__"
+                placeholders.append((placeholder, match.group(0)))
+                result = result.replace(match.group(0), placeholder, 1)
+            
+            # Экранируем оставшиеся _
+            result = result.replace('_', '\\_')
+            
+            # Восстанавливаем форматирование
+            for placeholder, original in placeholders:
+                result = result.replace(placeholder, original)
+        
+        # Экранируем остальные символы (кроме _)
         for char in chars_to_escape:
-            result = result.replace(char, f'\\{char}')
+            if char != '_':  # _ уже обработан выше
+                result = result.replace(char, f'\\{char}')
         
         return result
     

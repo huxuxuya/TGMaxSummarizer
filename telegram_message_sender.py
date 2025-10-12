@@ -197,3 +197,93 @@ class TelegramMessageSender:
         # Escape special HTML characters if needed
         html_text = TelegramFormatter.escape_html(html_text)
         return html_text
+    
+    @staticmethod
+    async def safe_send_message(
+        bot,
+        chat_id: Union[int, str],
+        text: str,
+        reply_markup: Optional[InlineKeyboardMarkup] = None,
+        parse_mode: ParseMode = ParseMode.MARKDOWN_V2,
+        disable_notification: bool = False,
+        **kwargs
+    ) -> bool:
+        """
+        Безопасно отправляет сообщение с автоматическим экранированием
+        
+        Args:
+            bot: Bot объект
+            chat_id: ID чата
+            text: Текст сообщения
+            reply_markup: Клавиатура (опционально)
+            parse_mode: Режим парсинга (по умолчанию MARKDOWN_V2)
+            disable_notification: Отключить уведомления
+            **kwargs: Дополнительные параметры для send_message
+        
+        Returns:
+            True если сообщение отправлено успешно, False иначе
+        """
+        logger.debug("=== SAFE_SEND_MESSAGE START ===")
+        logger.debug(f"Original text:\n{text}")
+        
+        try:
+            if parse_mode == ParseMode.MARKDOWN_V2:
+                # Используем умное экранирование для MarkdownV2
+                formatted_text = TelegramFormatter.smart_escape_markdown_v2(text)
+                logger.debug(f"Text for MarkdownV2:\n{formatted_text}")
+                
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=formatted_text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                    disable_notification=disable_notification,
+                    **kwargs
+                )
+            elif parse_mode == ParseMode.HTML:
+                # Для HTML используем escape_html
+                formatted_text = TelegramFormatter.escape_html(text)
+                logger.debug(f"Text for HTML:\n{formatted_text}")
+                
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=formatted_text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.HTML,
+                    disable_notification=disable_notification,
+                    **kwargs
+                )
+            else:
+                # Для обычного текста без форматирования
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=None,
+                    disable_notification=disable_notification,
+                    **kwargs
+                )
+            
+            logger.debug("✅ Message sent successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ SEND_MESSAGE parsing failed: {e}")
+            logger.error(f"Failed text:\n{text}")
+            
+            # Fallback: отправляем как обычный текст
+            try:
+                logger.debug("🔄 Fallback: sending as plain text")
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=None,
+                    disable_notification=disable_notification,
+                    **kwargs
+                )
+                logger.debug("✅ Fallback message sent successfully")
+                return True
+            except Exception as fallback_error:
+                logger.error(f"❌ Fallback also failed: {fallback_error}")
+                return False
