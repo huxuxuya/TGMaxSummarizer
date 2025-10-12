@@ -780,15 +780,34 @@ class BotHandlers:
             # Форматируем сообщение для публикации
             from utils import format_summary_for_telegram
             
+            logger.info(f"📝 Текст из БД для публикации: {summary[:200]}...")
+            
             # Разбиваем на части если нужно
             message_parts = format_summary_for_telegram(summary, date, chat_name)
             
+            logger.info(f"📝 Отформатированные части для публикации: {len(message_parts)} частей")
+            logger.info(f"📝 Первая часть: {message_parts[0][:200]}...")
+            
+            # Проверяем права бота в группе
+            try:
+                chat_info = await context.bot.get_chat(group_id)
+                logger.info(f"📋 Информация о группе: {chat_info.title} (ID: {group_id})")
+                
+                # Проверяем, является ли бот администратором
+                bot_member = await context.bot.get_chat_member(group_id, context.bot.id)
+                logger.info(f"🤖 Статус бота в группе: {bot_member.status}")
+                
+            except Exception as e:
+                logger.error(f"❌ Ошибка получения информации о группе: {e}")
+            
             # Отправляем в группу
+            logger.info(f"📤 Публикуем суммаризацию в группу {group_id} для чата {chat_id} за {date}")
             await TelegramMessageSender.safe_edit_message_text(
                 update.callback_query,
                 f"📤 Публикуем суммаризацию в группу...\n\n"
                 f"Чат: {chat_id}\n"
-                f"Дата: {date}",
+                f"Дата: {date}\n"
+                f"Группа: {group_id}",
                 reply_markup=cancel_keyboard()
             )
             
@@ -808,6 +827,7 @@ class BotHandlers:
                     if existing_message_ids[i]:
                         # Обновляем существующее сообщение
                         try:
+                            logger.info(f"🔄 Обновляем сообщение {i+1} (ID: {existing_message_ids[i]}) в группе {group_id}")
                             # Текст уже отформатирован в format_summary_for_telegram
                             await context.bot.edit_message_text(
                                 chat_id=group_id,
@@ -816,29 +836,50 @@ class BotHandlers:
                                 parse_mode=ParseMode.MARKDOWN_V2
                             )
                         except Exception as e:
+                            logger.error(f"❌ Ошибка при обновлении сообщения {existing_message_ids[i]}: {e}")
                             if "can't parse entities" in str(e).lower():
-                                # Fallback to HTML
+                                # Fallback to plain text
+                                await context.bot.edit_message_text(
+                                    chat_id=group_id,
+                                    message_id=existing_message_ids[i],
+                                    text=part
+                                )
+                            elif "message to edit not found" in str(e).lower() or "bad request" in str(e).lower() or "message not found" in str(e).lower():
+                                # Сообщение было удалено, отправляем новое
+                                logger.warning(f"⚠️ Сообщение {existing_message_ids[i]} было удалено, отправляем новое")
+                                logger.info(f"🔍 Текст ошибки: '{str(e)}'")
                                 try:
-                                    await context.bot.edit_message_text(
+                                    message = await context.bot.send_message(
                                         chat_id=group_id,
-                                        message_id=existing_message_ids[i],
-                                        text=TelegramMessageSender.format_text_for_html(part),
-                                        parse_mode=ParseMode.HTML
+                                        text=part,
+                                        parse_mode=ParseMode.MARKDOWN_V2,
+                                        disable_notification=True
                                     )
-                                except Exception as e2:
-                                    # Final fallback to plain text
-                                    await context.bot.edit_message_text(
-                                        chat_id=group_id,
-                                        message_id=existing_message_ids[i],
-                                        text=part
-                                    )
+                                    sent_message_ids.append(message.message_id)
+                                    logger.info(f"✅ Отправлено новое сообщение {i+1} (ID: {message.message_id}) вместо удаленного")
+                                except Exception as send_e:
+                                    if "can't parse entities" in str(send_e).lower():
+                                        # Fallback to plain text
+                                        message = await context.bot.send_message(
+                                            chat_id=group_id,
+                                            text=part,
+                                            disable_notification=True
+                                        )
+                                        sent_message_ids.append(message.message_id)
+                                        logger.info(f"✅ Отправлено новое сообщение {i+1} (ID: {message.message_id}) в plain text вместо удаленного")
+                                    else:
+                                        logger.error(f"❌ Ошибка отправки нового сообщения вместо удаленного: {send_e}")
+                                        break
                             else:
                                 raise e
-                        sent_message_ids.append(existing_message_ids[i])
-                        logger.info(f"✅ Обновлено сообщение {i+1} (ID: {existing_message_ids[i]})")
+                        # Добавляем ID только если сообщение было успешно обновлено (не удалено)
+                        if existing_message_ids[i] not in sent_message_ids:
+                            sent_message_ids.append(existing_message_ids[i])
+                            logger.info(f"✅ Обновлено сообщение {i+1} (ID: {existing_message_ids[i]})")
                     else:
                         # Отправляем новое сообщение
                         try:
+                            logger.info(f"📤 Отправляем новое сообщение {i+1} в группу {group_id}")
                             # Текст уже отформатирован в format_summary_for_telegram
                             message = await context.bot.send_message(
                                 chat_id=group_id,
@@ -848,21 +889,12 @@ class BotHandlers:
                             )
                         except Exception as e:
                             if "can't parse entities" in str(e).lower():
-                                # Fallback to HTML
-                                try:
-                                    message = await context.bot.send_message(
-                                        chat_id=group_id,
-                                        text=TelegramMessageSender.format_text_for_html(part),
-                                        parse_mode=ParseMode.HTML,
-                                        disable_notification=True
-                                    )
-                                except Exception as e2:
-                                    # Final fallback to plain text
-                                    message = await context.bot.send_message(
-                                        chat_id=group_id,
-                                        text=part,
-                                        disable_notification=True
-                                    )
+                                # Fallback to plain text
+                                message = await context.bot.send_message(
+                                    chat_id=group_id,
+                                    text=part,
+                                    disable_notification=True
+                                )
                             else:
                                 raise e
                         sent_message_ids.append(message.message_id)
@@ -872,12 +904,36 @@ class BotHandlers:
                         await asyncio.sleep(0.5)  # Пауза между сообщениями
                 except Exception as e:
                     logger.error(f"Ошибка обработки сообщения {i+1}: {e}")
-                    break
+                    
+                    # Проверяем, не является ли это ошибкой удаленного сообщения
+                    if "message to edit not found" in str(e).lower() or "bad request" in str(e).lower() or "message not found" in str(e).lower():
+                        logger.warning(f"⚠️ Сообщение было удалено, пытаемся отправить новое")
+                        try:
+                            # Отправляем новое сообщение
+                            message = await context.bot.send_message(
+                                chat_id=group_id,
+                                text=part,
+                                parse_mode=ParseMode.MARKDOWN_V2,
+                                disable_notification=True
+                            )
+                            sent_message_ids.append(message.message_id)
+                            logger.info(f"✅ Отправлено новое сообщение {i+1} (ID: {message.message_id}) вместо удаленного")
+                        except Exception as send_e:
+                            logger.error(f"❌ Не удалось отправить новое сообщение: {send_e}")
+                    
+                    # Продолжаем с следующим сообщением
+                    continue
             
             # Сохраняем message_id в БД для каждой части
             for i, message_id in enumerate(sent_message_ids):
                 if message_id:
                     self.db.update_group_message(group_id, chat_id, f"{date}_{i}", message_id)
+            
+            # Очищаем записи о сообщениях, которые больше не существуют
+            for i, existing_id in enumerate(existing_message_ids):
+                if existing_id and existing_id not in sent_message_ids:
+                    logger.info(f"🗑️ Очищаем запись о несуществующем сообщении {existing_id}")
+                    self.db.delete_group_message(group_id, chat_id, f"{date}_{i}")
             
             # Подсчитываем статистику
             updated_count = sum(1 for msg_id in existing_message_ids if msg_id is not None)
@@ -2149,9 +2205,12 @@ class BotHandlers:
             else:
                 back_callback = "back_to_chat_settings"
             
+            # Безопасно экранируем текст ошибки для MarkdownV2
+            safe_error_text = TelegramFormatter.escape_markdown_v2(str(e))
+            
             await TelegramMessageSender.safe_edit_message_text(
                 query,
-                f"❌ Ошибка анализа: {str(e)}",
+                f"❌ Ошибка анализа: {safe_error_text}",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Назад", callback_data=back_callback)
                 ]])

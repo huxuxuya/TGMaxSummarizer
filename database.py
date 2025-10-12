@@ -443,6 +443,16 @@ class DatabaseManager:
             result = cursor.fetchone()
             return result[0] if result else None
     
+    def delete_group_message(self, group_id: int, vk_chat_id: str, date: str):
+        """Удалить запись о сообщении в группе"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM group_messages
+                WHERE group_id = ? AND vk_chat_id = ? AND date = ?
+            """, (group_id, vk_chat_id, date))
+            conn.commit()
+    
     def _create_ai_provider_tables(self, cursor):
         """Создать таблицы для AI провайдеров"""
         # Пользовательские предпочтения AI провайдеров
