@@ -102,6 +102,10 @@ class ChatGPTProvider(BaseAIProvider):
                 return None
             
             self.logger.info(f"🤖 Генерируем ответ через ChatGPT на промпт длиной {len(prompt)} символов")
+            self.logger.debug(f"=== GENERATE_RESPONSE INPUT ===")
+            self.logger.debug(f"Prompt length: {len(prompt)}")
+            self.logger.debug(f"Prompt preview: {prompt[:200]}...")
+            self.logger.debug(f"=== END INPUT ===")
             
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -111,8 +115,13 @@ class ChatGPTProvider(BaseAIProvider):
             )
             
             if response.choices and response.choices[0].message.content:
-                self.logger.info(f"✅ Получен ответ от ChatGPT длиной {len(response.choices[0].message.content)} символов")
-                return response.choices[0].message.content
+                content = response.choices[0].message.content
+                self.logger.info(f"✅ Получен ответ от ChatGPT длиной {len(content)} символов")
+                self.logger.debug(f"=== GENERATE_RESPONSE OUTPUT ===")
+                self.logger.debug(f"Response length: {len(content)}")
+                self.logger.debug(f"Response preview: {content[:200]}...")
+                self.logger.debug(f"=== END OUTPUT ===")
+                return content
             else:
                 self.logger.warning("⚠️ ChatGPT вернул пустой ответ")
                 return None

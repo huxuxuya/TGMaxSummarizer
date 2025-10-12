@@ -1165,7 +1165,7 @@ class BotHandlers:
                 html_reflection = TelegramFormatter.escape_html(reflection)
                 html_improved = TelegramFormatter.escape_html(improved_summary)
                 
-                text += f"\n<b>📝 Исходная суммаризация:</b>\n{html_original}\n\n---\n\n<b>🤔 Рефлексия и анализ:</b>\n{html_reflection}\n\n---\n\n<b>✨ Улучшенная суммаризация:</b>\n{html_improved}"
+                text += f"\n{html_improved}"
                 
                 keyboard = [
                     [InlineKeyboardButton("📤 Вывести в группу", callback_data=f"publish_summary_{chat_id}_{date}")],
@@ -1992,9 +1992,7 @@ class BotHandlers:
             analysis_text += f"🔗 Модель: *{selected_model}*\n"
         
         # Добавляем информацию о рефлексии
-        from config import ENABLE_REFLECTION
-        if ENABLE_REFLECTION:
-            analysis_text += "\n🤔 *Рефлексия включена* - анализ будет улучшен критической оценкой"
+        # Убираем информацию о рефлексии из сообщения
         
         analysis_text += "\n\n⏳ Это может занять некоторое время."
         

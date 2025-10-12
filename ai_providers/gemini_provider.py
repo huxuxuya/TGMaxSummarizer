@@ -110,6 +110,10 @@ class GeminiProvider(BaseAIProvider):
                 return None
             
             self.logger.info(f"🤖 Генерируем ответ через Gemini на промпт длиной {len(prompt)} символов")
+            self.logger.debug(f"=== GENERATE_RESPONSE INPUT ===")
+            self.logger.debug(f"Prompt length: {len(prompt)}")
+            self.logger.debug(f"Prompt preview: {prompt[:200]}...")
+            self.logger.debug(f"=== END INPUT ===")
             
             response = self.model.generate_content(
                 prompt,
@@ -143,8 +147,13 @@ class GeminiProvider(BaseAIProvider):
             
             # Проверяем наличие текста
             if hasattr(response, 'text') and response.text:
-                self.logger.info(f"✅ Получен ответ от Gemini длиной {len(response.text)} символов")
-                return response.text
+                content = response.text
+                self.logger.info(f"✅ Получен ответ от Gemini длиной {len(content)} символов")
+                self.logger.debug(f"=== GENERATE_RESPONSE OUTPUT ===")
+                self.logger.debug(f"Response length: {len(content)}")
+                self.logger.debug(f"Response preview: {content[:200]}...")
+                self.logger.debug(f"=== END OUTPUT ===")
+                return content
             else:
                 self.logger.warning("⚠️ Gemini вернул пустой ответ")
                 return None

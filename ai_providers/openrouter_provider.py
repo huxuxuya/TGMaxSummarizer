@@ -474,6 +474,10 @@ class OpenRouterProvider(BaseAIProvider):
                     self.logger.info(f"🔄 Попытка {attempt}/{max_attempts} после ожидания {delay_seconds}с")
                 else:
                     self.logger.info(f"🤖 Генерируем ответ через OpenRouter на промпт длиной {len(prompt)} символов")
+                    self.logger.debug(f"=== GENERATE_RESPONSE INPUT ===")
+                    self.logger.debug(f"Prompt length: {len(prompt)}")
+                    self.logger.debug(f"Prompt preview: {prompt[:200]}...")
+                    self.logger.debug(f"=== END INPUT ===")
                 
                 data = {
                     "model": self.current_model,
@@ -492,6 +496,10 @@ class OpenRouterProvider(BaseAIProvider):
                     if result.get("choices") and result["choices"][0].get("message", {}).get("content"):
                         content = result["choices"][0]["message"]["content"]
                         self.logger.info(f"✅ Получен ответ от OpenRouter длиной {len(content)} символов")
+                        self.logger.debug(f"=== GENERATE_RESPONSE OUTPUT ===")
+                        self.logger.debug(f"Response length: {len(content)}")
+                        self.logger.debug(f"Response preview: {content[:200]}...")
+                        self.logger.debug(f"=== END OUTPUT ===")
                         return content
                     else:
                         self.logger.warning("⚠️ OpenRouter вернул пустой ответ")

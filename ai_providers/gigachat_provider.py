@@ -47,7 +47,7 @@ class GigaChatProvider(BaseAIProvider):
             
             # Вызываем GigaChat API
             self.logger.info("🤖 Отправляем запрос в GigaChat...")
-            summary = await self._call_gigachat_api(formatted_text)
+            summary = await self._call_gigachat_api_for_summarization(formatted_text)
             
             if summary:
                 self.logger.info("✅ Суммаризация получена от GigaChat")
@@ -90,6 +90,10 @@ class GigaChatProvider(BaseAIProvider):
         """
         try:
             self.logger.info(f"🤖 Генерируем ответ через GigaChat на промпт длиной {len(prompt)} символов")
+            self.logger.debug(f"=== GENERATE_RESPONSE INPUT ===")
+            self.logger.debug(f"Prompt length: {len(prompt)}")
+            self.logger.debug(f"Prompt preview: {prompt[:200]}...")
+            self.logger.debug(f"=== END INPUT ===")
             
             # Получаем токен доступа
             token = await self._get_access_token()
@@ -97,11 +101,15 @@ class GigaChatProvider(BaseAIProvider):
                 self.logger.error("❌ Не удалось получить токен доступа GigaChat")
                 return None
             
-            # Вызываем GigaChat API
-            response = await self._call_gigachat_api(prompt)
+            # Execute API call with provided prompt (NO MODIFICATION!)
+            response = await self._execute_api_call(prompt, temperature=0.3, max_tokens=2000)
             
             if response:
                 self.logger.info(f"✅ Получен ответ от GigaChat длиной {len(response)} символов")
+                self.logger.debug(f"=== GENERATE_RESPONSE OUTPUT ===")
+                self.logger.debug(f"Response length: {len(response)}")
+                self.logger.debug(f"Response preview: {response[:200]}...")
+                self.logger.debug(f"=== END OUTPUT ===")
                 return response
             else:
                 self.logger.warning("⚠️ GigaChat вернул пустой ответ")
@@ -211,15 +219,17 @@ class GigaChatProvider(BaseAIProvider):
             self.logger.error(f"❌ Ошибка запроса token GigaChat: {e}")
             return None
     
-    async def _call_gigachat_api(self, text: str) -> Optional[str]:
+    async def _execute_api_call(self, prompt: str, temperature: float = 0.7, max_tokens: int = 1000) -> Optional[str]:
         """
-        Вызвать GigaChat API для суммаризации
+        Execute GigaChat API call with given prompt
         
         Args:
-            text: Текст для суммаризации
+            prompt: Complete prompt to send to API
+            temperature: Model temperature
+            max_tokens: Maximum tokens in response
             
         Returns:
-            Результат суммаризации или None при ошибке
+            API response or None on error
         """
         # Получаем access token
         access_token = await self._get_access_token()
@@ -233,6 +243,64 @@ class GigaChatProvider(BaseAIProvider):
             "Content-Type": "application/json; charset=utf-8"
         }
         
+        data = {
+            "model": "GigaChat:latest",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        try:
+            self.logger.info(f"🔗 Отправляем запрос на {url}")
+            self.logger.info(f"📝 Длина промпта: {len(prompt)} символов")
+            self.logger.debug(f"=== EXECUTE_API_CALL INPUT ===")
+            self.logger.debug(f"Prompt preview: {prompt[:200]}...")
+            self.logger.debug(f"=== END INPUT ===")
+            
+            response = requests.post(url, headers=headers, json=data, timeout=30, verify=False)
+            self.logger.info(f"📡 Получен ответ GigaChat: {response.status_code}")
+            
+            if response.status_code == 200:
+                result = response.json()
+                self.logger.info(f"📋 Структура ответа GigaChat: {list(result.keys())}")
+                
+                if 'choices' in result and len(result['choices']) > 0:
+                    api_response = result['choices'][0]['message']['content']
+                    self.logger.debug(f"=== EXECUTE_API_CALL OUTPUT ===")
+                    self.logger.debug(f"Response length: {len(api_response)}")
+                    self.logger.debug(f"Response preview: {api_response[:200]}...")
+                    self.logger.debug(f"=== END OUTPUT ===")
+                    return api_response
+                else:
+                    self.logger.error("❌ Неожиданный формат ответа от GigaChat")
+                    self.logger.error(f"📋 Полный ответ: {result}")
+                    return None
+            else:
+                self.logger.error(f"❌ HTTP ошибка GigaChat: {response.status_code}")
+                self.logger.error(f"📋 Ответ сервера: {response.text}")
+                return None
+                
+        except requests.exceptions.Timeout:
+            self.logger.error("❌ Таймаут запроса к GigaChat")
+            return None
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"❌ Ошибка запроса к GigaChat: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"❌ Неожиданная ошибка при вызове GigaChat: {e}")
+            return None
+
+    async def _call_gigachat_api_for_summarization(self, text: str) -> Optional[str]:
+        """
+        Create summarization prompt and execute API call
+        
+        Args:
+            text: Formatted messages text
+            
+        Returns:
+            Summarization result or None on error
+        """
+        # Create summarization prompt (existing hardcoded prompt)
         prompt = f"""Действуй так как будто ты учитель первого класса и это твой родительский чат, тебя зовут Виктория Романовна. Проанализируй сообщения родительского чат, в чате 45 человек. Включи ТОЛЬКО важные события, которые требуют действий от родителей. Сейчас уже конец дня и нужно сообщить всем родителям общую информацию о том что сегодня было за день, что надо сделать завтра и что надо сделать в ближайшем будущем.
 
 ИГНОРИРУЙ микроменеджмент и перемещения:
@@ -263,43 +331,5 @@ class GigaChatProvider(BaseAIProvider):
 Пиши как будто ты отлично знаешь и руководствуешься книжкой "Пиши Сокращай".
 Только факты. Только действия. Без воды."""
 
-        data = {
-            "model": "GigaChat:latest",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            "temperature": 0.7,
-            "max_tokens": 1000
-        }
-        
-        try:
-            self.logger.info(f"🔗 Отправляем запрос на {url}")
-            self.logger.info(f"📝 Длина текста: {len(text)} символов")
-            
-            response = requests.post(url, headers=headers, json=data, timeout=30, verify=False)
-            self.logger.info(f"📡 Получен ответ GigaChat: {response.status_code}")
-            
-            if response.status_code == 200:
-                result = response.json()
-                self.logger.info(f"📋 Структура ответа GigaChat: {list(result.keys())}")
-                
-                if 'choices' in result and len(result['choices']) > 0:
-                    return result['choices'][0]['message']['content']
-                else:
-                    self.logger.error("❌ Неожиданный формат ответа от GigaChat")
-                    self.logger.error(f"📋 Полный ответ: {result}")
-                    return None
-            else:
-                self.logger.error(f"❌ HTTP ошибка GigaChat: {response.status_code}")
-                self.logger.error(f"📋 Ответ сервера: {response.text}")
-                return None
-                
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"❌ Ошибка запроса к GigaChat: {e}")
-            return None
-        except Exception as e:
-            self.logger.error(f"❌ Неожиданная ошибка GigaChat: {e}")
-            return None
+        # Execute API call with summarization prompt
+        return await self._execute_api_call(prompt, temperature=0.7, max_tokens=1000)
