@@ -448,3 +448,199 @@ class TelegramFormatter:
             parts.append(current_part)
         
         return parts
+    
+    @staticmethod
+    def format_analysis_result_with_reflection(analysis_result: dict, parse_mode: str = "markdown_v2") -> str:
+        """
+        Форматирует результат анализа с рефлексией в три раздела с цитатами
+        
+        Args:
+            analysis_result: Словарь с результатами анализа
+            parse_mode: Режим парсинга (markdown_v2, markdown, html)
+            
+        Returns:
+            Отформатированный текст с тремя разделами
+        """
+        if not isinstance(analysis_result, dict):
+            # Если это не словарь, возвращаем как есть
+            return str(analysis_result)
+        
+        # Извлекаем компоненты
+        original_summary = analysis_result.get('summary', '')
+        reflection = analysis_result.get('reflection', '')
+        improved_summary = analysis_result.get('improved', '')
+        
+        # Формируем заголовки
+        if parse_mode == "markdown_v2":
+            header1 = "*📝 Первый ответ модели:*"
+            header2 = "*🤔 Результат рефлексии:*"
+            header3 = "*✨ Финальная суммаризация:*"
+            error_text = "*❌ Ошибка:*"
+        elif parse_mode == "markdown":
+            header1 = "*📝 Первый ответ модели:*"
+            header2 = "*🤔 Результат рефлексии:*"
+            header3 = "*✨ Финальная суммаризация:*"
+            error_text = "*❌ Ошибка:*"
+        elif parse_mode == "html":
+            header1 = "<b>📝 Первый ответ модели:</b>"
+            header2 = "<b>🤔 Результат рефлексии:</b>"
+            header3 = "<b>✨ Финальная суммаризация:</b>"
+            error_text = "<b>❌ Ошибка:</b>"
+        else:
+            header1 = "📝 Первый ответ модели:"
+            header2 = "🤔 Результат рефлексии:"
+            header3 = "✨ Финальная суммаризация:"
+            error_text = "❌ Ошибка:"
+        
+        result_parts = []
+        
+        # Раздел 1: Первый ответ модели
+        result_parts.append(header1)
+        if original_summary:
+            if parse_mode in ["markdown_v2", "markdown"]:
+                # Используем блок цитаты
+                quoted_text = TelegramFormatter._format_quote_block(original_summary, parse_mode)
+            else:
+                quoted_text = f"> {original_summary}"
+            result_parts.append(quoted_text)
+        else:
+            result_parts.append(f"{error_text} Не удалось получить первый ответ модели")
+        
+        result_parts.append("")  # Пустая строка между разделами
+        
+        # Раздел 2: Результат рефлексии
+        result_parts.append(header2)
+        if reflection:
+            if parse_mode in ["markdown_v2", "markdown"]:
+                quoted_text = TelegramFormatter._format_quote_block(reflection, parse_mode)
+            else:
+                quoted_text = f"> {reflection}"
+            result_parts.append(quoted_text)
+        else:
+            result_parts.append(f"{error_text} Рефлексия не была выполнена или завершилась с ошибкой")
+        
+        result_parts.append("")  # Пустая строка между разделами
+        
+        # Раздел 3: Финальная суммаризация
+        result_parts.append(header3)
+        if improved_summary:
+            if parse_mode in ["markdown_v2", "markdown"]:
+                quoted_text = TelegramFormatter._format_quote_block(improved_summary, parse_mode)
+            else:
+                quoted_text = f"> {improved_summary}"
+            result_parts.append(quoted_text)
+        else:
+            result_parts.append(f"{error_text} Финальная суммаризация не была создана")
+        
+        return "\n".join(result_parts)
+    
+    @staticmethod
+    def _format_quote_block(text: str, parse_mode: str = "markdown_v2") -> str:
+        """
+        Форматирует текст как блок цитаты
+        
+        Args:
+            text: Текст для форматирования
+            parse_mode: Режим парсинга
+            
+        Returns:
+            Отформатированный блок цитаты
+        """
+        if not text:
+            return ""
+        
+        if parse_mode == "markdown":
+            # Для обычного Markdown используем символ цитаты без экранирования
+            lines = text.split('\n')
+            quoted_lines = []
+            
+            for line in lines:
+                if line.strip():  # Если строка не пустая
+                    quoted_lines.append(f"> {line}")
+                else:  # Если строка пустая, оставляем как есть
+                    quoted_lines.append("")
+            
+            return "\n".join(quoted_lines)
+        else:
+            # Для других режимов используем символ цитаты
+            lines = text.split('\n')
+            quoted_lines = []
+            
+            for line in lines:
+                if parse_mode == "markdown_v2":
+                    # НЕ экранируем здесь - это сделает safe_edit_message_text
+                    # Просто добавляем символ цитаты (будет экранирован позже)
+                    quoted_lines.append(f"> {line}")
+                elif parse_mode == "html":
+                    escaped_line = TelegramFormatter.escape_html(line)
+                    quoted_lines.append(f"<blockquote>{escaped_line}</blockquote>")
+                else:
+                    quoted_lines.append(f"> {line}")
+            
+            return "\n".join(quoted_lines)
+    
+    @staticmethod
+    def smart_escape_markdown_v2(text: str) -> str:
+        """
+        Умное экранирование для MarkdownV2 - сохраняет форматирование, но экранирует проблемные символы
+        Обрабатывает блоки цитат (>) контекстно - не экранирует > в начале строки
+        
+        Args:
+            text: Текст для экранирования
+            
+        Returns:
+            Умно экранированный текст
+        """
+        if not text:
+            return text
+        
+        # Символы, которые нужно экранировать для MarkdownV2
+        # НЕ экранируем: *, _, ` (нужны для форматирования)
+        # Экранируем: [, ], (, ), ~, ., !, -, +, =, |, {, }, # (могут вызвать проблемы)
+        # > обрабатываем контекстно - не экранируем в начале строки (блоки цитат)
+        problematic_chars = ['[', ']', '(', ')', '~', '.', '!', '-', '+', '=', '|', '{', '}', '#']
+        
+        # Обрабатываем построчно для сохранения блоков цитат
+        lines = text.split('\n')
+        escaped_lines = []
+        
+        for line in lines:
+            # Проверяем, начинается ли строка с маркера блока цитаты
+            if line.startswith('> '):
+                # Это блок цитаты - НЕ экранируем ведущий >
+                # Но экранируем содержимое строки
+                quote_content = line[2:]  # Убираем префикс "> "
+                escaped_content = TelegramFormatter._escape_text_content(quote_content, problematic_chars)
+                escaped_lines.append(f"> {escaped_content}")
+            else:
+                # Обычная строка - экранируем все включая >
+                escaped_line = TelegramFormatter._escape_text_content(line, problematic_chars + ['>'])
+                escaped_lines.append(escaped_line)
+        
+        return '\n'.join(escaped_lines)
+    
+    @staticmethod
+    def _escape_text_content(text: str, chars_to_escape: list) -> str:
+        """
+        Вспомогательная функция для экранирования текста
+        
+        Args:
+            text: Текст для экранирования
+            chars_to_escape: Список символов для экранирования
+            
+        Returns:
+            Экранированный текст
+        """
+        if not text:
+            return text
+        
+        result = text
+        
+        # Экранируем обратные слеши в первую очередь
+        result = result.replace('\\', '\\\\')
+        
+        # Экранируем указанные символы
+        for char in chars_to_escape:
+            result = result.replace(char, f'\\{char}')
+        
+        return result

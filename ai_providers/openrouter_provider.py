@@ -14,7 +14,7 @@ class OpenRouterProvider(BaseAIProvider):
         self.api_key = config.get('OPENROUTER_API_KEY', '')
         self.base_url = "https://openrouter.ai/api/v1"
         
-        # Доступные модели OpenRouter (все 51 бесплатная модель)
+        # Доступные модели OpenRouter (все 51 бесплатная модель, но показываем только топ 10)
         self.available_models = {
             "alibaba/tongyi-deepresearch-30b-a3b:free": {
                 "display_name": "Tongyi DeepResearch 30B A3B (free)",
@@ -330,6 +330,11 @@ class OpenRouterProvider(BaseAIProvider):
         self.current_model = self.default_model
         self.client = None
         
+        # Кэш для моделей (TTL: 1 час)
+        self._models_cache = None
+        self._models_cache_timestamp = 0
+        self._models_cache_ttl = 3600  # 1 час в секундах
+        
         if self.api_key and self.api_key != 'your_openrouter_key':
             self.client = httpx.AsyncClient(
                 timeout=30.0,
@@ -340,6 +345,35 @@ class OpenRouterProvider(BaseAIProvider):
                     "X-Title": "VK MAX Telegram Bot"
                 }
             )
+    
+    async def initialize(self) -> bool:
+        """
+        Инициализация OpenRouter провайдера
+        
+        Returns:
+            True если инициализация успешна, False иначе
+        """
+        try:
+            if not self.api_key or self.api_key == 'your_openrouter_key':
+                self.logger.error("❌ OpenRouter API ключ не установлен")
+                return False
+            
+            if not self.client:
+                self.logger.error("❌ Клиент OpenRouter не создан")
+                return False
+            
+            # Проверяем доступность провайдера
+            if not await self.is_available():
+                self.logger.error("❌ OpenRouter недоступен")
+                return False
+            
+            self.is_initialized = True
+            self.logger.info(f"✅ OpenRouter провайдер успешно инициализирован с моделью: {self.current_model}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка инициализации OpenRouter: {e}")
+            return False
     
     async def summarize_chat(self, messages: List[Dict], chat_context: Optional[Dict] = None) -> str:
         """
@@ -441,8 +475,7 @@ class OpenRouterProvider(BaseAIProvider):
             
             response = await self.client.post(
                 f"{self.base_url}/chat/completions",
-                json=data,
-                headers=self.headers
+                json=data
             )
             
             if response.status_code == 200:
@@ -593,14 +626,194 @@ class OpenRouterProvider(BaseAIProvider):
         if self.client:
             await self.client.aclose()
     
-    def get_available_models(self) -> Dict[str, Dict[str, Any]]:
+    async def get_available_models(self) -> Dict[str, Dict[str, Any]]:
         """
-        Получить список доступных моделей
+        Получить список доступных моделей (топ 10 лучших бесплатных с OpenRouter API)
         
         Returns:
             Словарь с доступными моделями
         """
-        return self.available_models.copy()
+        import time
+        
+        try:
+            # Проверяем кэш
+            current_time = time.time()
+            if (self._models_cache is not None and 
+                current_time - self._models_cache_timestamp < self._models_cache_ttl):
+                self.logger.info("📋 Используем кэшированный список моделей")
+                return self._models_cache
+            
+            # Получаем актуальный список моделей от OpenRouter API
+            api_models = await self._fetch_models_from_api()
+            
+            if api_models:
+                # Выбираем топ 10 лучших бесплатных моделей
+                top_10_models = self._select_top_10_free_models(api_models)
+                
+                # Сохраняем в кэш
+                self._models_cache = top_10_models
+                self._models_cache_timestamp = current_time
+                
+                return top_10_models
+            else:
+                # Fallback к локальному списку, если API недоступен
+                self.logger.warning("⚠️ Не удалось получить модели от API, используем локальный список")
+                fallback_models = self._get_fallback_models()
+                
+                # Сохраняем fallback в кэш на короткое время (5 минут)
+                self._models_cache = fallback_models
+                self._models_cache_timestamp = current_time
+                self._models_cache_ttl = 300  # 5 минут для fallback
+                
+                return fallback_models
+                
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка получения моделей от API: {e}")
+            # Fallback к локальному списку
+            fallback_models = self._get_fallback_models()
+            
+            # Сохраняем fallback в кэш на короткое время
+            self._models_cache = fallback_models
+            self._models_cache_timestamp = time.time()
+            self._models_cache_ttl = 300  # 5 минут для fallback
+            
+            return fallback_models
+    
+    async def _fetch_models_from_api(self) -> Optional[List[Dict[str, Any]]]:
+        """
+        Получить список моделей от OpenRouter API
+        
+        Returns:
+            Список моделей от API или None при ошибке
+        """
+        try:
+            if not self.client:
+                self.logger.error("❌ Клиент OpenRouter не инициализирован")
+                return None
+            
+            self.logger.info("🔍 Получаем актуальный список моделей от OpenRouter API...")
+            
+            response = await self.client.get(f"{self.base_url}/models")
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("data", [])
+                self.logger.info(f"✅ Получено {len(models)} моделей от OpenRouter API")
+                return models
+            else:
+                self.logger.error(f"❌ OpenRouter API вернул ошибку: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка запроса к OpenRouter API: {e}")
+            return None
+    
+    def _select_top_10_free_models(self, api_models: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """
+        Выбрать топ 10 лучших бесплатных моделей из списка API
+        
+        Args:
+            api_models: Список моделей от OpenRouter API
+            
+        Returns:
+            Словарь с топ 10 моделями
+        """
+        # Фильтруем только бесплатные модели
+        free_models = []
+        for model in api_models:
+            model_id = model.get("id", "")
+            pricing = model.get("pricing", {})
+            
+            # Проверяем, что модель бесплатная
+            if pricing.get("prompt") == "0" and pricing.get("completion") == "0":
+                # Создаем структуру модели
+                model_info = {
+                    "display_name": model.get("name", model_id),
+                    "description": model.get("description", "Нет описания"),
+                    "free": True,
+                    "context_length": model.get("context_length", 4096),
+                    "pricing": pricing,
+                    "top_provider": model.get("top_provider", {}),
+                    "per_request_limits": model.get("per_request_limits", {})
+                }
+                free_models.append((model_id, model_info))
+        
+        # Сортируем модели по приоритету (размер контекста, популярность и т.д.)
+        def model_priority(item):
+            model_id, model_info = item
+            context_length = model_info.get("context_length", 0)
+            
+            # Приоритет для известных хороших моделей
+            priority_models = {
+                "deepseek/deepseek-chat-v3.1:free": 1000,
+                "deepseek/deepseek-r1:free": 950,
+                "deepseek/deepseek-v3:free": 900,
+                "mistral/mistral-small-3.2:free": 850,
+                "meta/llama-3.3-8b-instruct:free": 800,
+                "qwen/qwen3-8b:free": 750,
+                "google/gemma-3-12b:free": 700,
+                "moonshotai/kimi-dev-72b:free": 650,
+                "microsoft/mai-ds-r1:free": 600,
+                "tng/deepseek-r1t-chimera:free": 550
+            }
+            
+            # Если модель в приоритетном списке, используем её приоритет
+            if model_id in priority_models:
+                return priority_models[model_id]
+            
+            # Иначе сортируем по размеру контекста
+            return context_length
+        
+        # Сортируем по приоритету (по убыванию)
+        free_models.sort(key=model_priority, reverse=True)
+        
+        # Берем топ 10
+        top_10 = free_models[:10]
+        
+        # Преобразуем в словарь
+        result = {}
+        for model_id, model_info in top_10:
+            result[model_id] = model_info
+        
+        self.logger.info(f"✅ Выбрано {len(result)} лучших бесплатных моделей")
+        return result
+    
+    def _get_fallback_models(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Получить fallback список моделей (локальный)
+        
+        Returns:
+            Словарь с локальными моделями
+        """
+        # Топ 10 бесплатных моделей OpenRouter (fallback список)
+        top_10_free_models = [
+            "deepseek/deepseek-chat-v3.1:free",  # Лучшая бесплатная модель
+            "deepseek/deepseek-r1:free",  # R1 - отличная для рассуждений
+            "deepseek/deepseek-v3:free",  # V3 - флагманская модель
+            "mistral/mistral-small-3.2:free",  # Mistral Small 3.2
+            "meta/llama-3.3-8b-instruct:free",  # Llama 3.3 8B
+            "qwen/qwen3-8b:free",  # Qwen3 8B
+            "google/gemma-3-12b:free",  # Gemma 3 12B
+            "moonshotai/kimi-dev-72b:free",  # Kimi Dev 72B
+            "microsoft/mai-ds-r1:free",  # Microsoft MAI DS R1
+            "tng/deepseek-r1t-chimera:free"  # DeepSeek R1T Chimera
+        ]
+        
+        # Фильтруем только топ 10 моделей
+        filtered_models = {}
+        for model_id in top_10_free_models:
+            if model_id in self.available_models:
+                filtered_models[model_id] = self.available_models[model_id]
+        
+        return filtered_models
+    
+    def clear_models_cache(self):
+        """
+        Очистить кэш моделей (принудительное обновление)
+        """
+        self._models_cache = None
+        self._models_cache_timestamp = 0
+        self.logger.info("🗑️ Кэш моделей очищен")
     
     def set_model(self, model_id: str) -> bool:
         """
@@ -612,13 +825,18 @@ class OpenRouterProvider(BaseAIProvider):
         Returns:
             True если модель установлена, False если модель не найдена
         """
+        # Проверяем модель в полном списке доступных моделей
         if model_id in self.available_models:
             self.current_model = model_id
             self.logger.info(f"✅ Модель OpenRouter изменена на: {model_id}")
             return True
         else:
-            self.logger.error(f"❌ Модель {model_id} не найдена в доступных моделях")
-            return False
+            # Логируем предупреждение, но все равно устанавливаем модель
+            # Это позволяет использовать модели, которые есть в OpenRouter, но не в нашем списке
+            self.logger.warning(f"⚠️ Модель {model_id} не найдена в локальном списке, но устанавливаем её")
+            self.current_model = model_id
+            self.logger.info(f"✅ Модель OpenRouter установлена: {model_id}")
+            return True
     
     def get_current_model(self) -> str:
         """

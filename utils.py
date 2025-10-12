@@ -233,3 +233,40 @@ def format_info_message(message: str) -> str:
 def format_warning_message(message: str) -> str:
     """Форматировать предупреждение"""
     return f"⚠️ {message}"
+
+def shorten_callback_data(callback_data: str, max_length: int = 60) -> str:
+    """
+    Сокращает callback_data до максимальной длины, сохраняя важную информацию
+    
+    Args:
+        callback_data: Исходный callback_data
+        max_length: Максимальная длина (по умолчанию 60, оставляем запас от лимита 64)
+    
+    Returns:
+        Сокращенный callback_data
+    """
+    if len(callback_data) <= max_length:
+        return callback_data
+    
+    # Если это callback с model_id, попробуем сократить model_id
+    if ':' in callback_data:
+        prefix, model_id = callback_data.split(':', 1)
+        
+        # Вычисляем максимальную длину для model_id
+        max_model_id_length = max_length - len(prefix) - 1  # -1 для ':'
+        
+        if len(model_id) > max_model_id_length:
+            # Сокращаем model_id, оставляя начало и конец
+            if max_model_id_length < 10:
+                # Если очень мало места, берем только начало
+                shortened_model_id = model_id[:max_model_id_length]
+            else:
+                # Берем начало и конец
+                start_length = max_model_id_length // 2
+                end_length = max_model_id_length - start_length - 3  # -3 для '...'
+                shortened_model_id = model_id[:start_length] + '...' + model_id[-end_length:]
+            
+            return f"{prefix}:{shortened_model_id}"
+    
+    # Если не удалось сократить по-умному, просто обрезаем
+    return callback_data[:max_length]

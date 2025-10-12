@@ -116,12 +116,25 @@ class DatabaseManager:
                     vk_chat_id TEXT,
                     date TEXT,
                     summary_text TEXT,
+                    reflection_text TEXT,
+                    improved_summary_text TEXT,
                     summary_type TEXT DEFAULT 'daily',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(vk_chat_id, date, summary_type)
                 )
             """)
+            
+            # Миграция: добавляем новые поля если их нет
+            try:
+                cursor.execute("ALTER TABLE summaries ADD COLUMN reflection_text TEXT")
+            except sqlite3.OperationalError:
+                pass  # Поле уже существует
+            
+            try:
+                cursor.execute("ALTER TABLE summaries ADD COLUMN improved_summary_text TEXT")
+            except sqlite3.OperationalError:
+                pass  # Поле уже существует
             
             # Сообщения бота в группах
             cursor.execute("""
@@ -308,14 +321,15 @@ class DatabaseManager:
                 "recent_days": recent_days
             }
     
-    def save_summary(self, vk_chat_id: str, date: str, summary_text: str, summary_type: str = "daily"):
+    def save_summary(self, vk_chat_id: str, date: str, summary_text: str, summary_type: str = "daily", 
+                     reflection_text: str = None, improved_summary_text: str = None):
         """Сохранить суммаризацию"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT OR REPLACE INTO summaries (vk_chat_id, date, summary_text, summary_type)
-                VALUES (?, ?, ?, ?)
-            """, (vk_chat_id, date, summary_text, summary_type))
+                INSERT OR REPLACE INTO summaries (vk_chat_id, date, summary_text, summary_type, reflection_text, improved_summary_text)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (vk_chat_id, date, summary_text, summary_type, reflection_text, improved_summary_text))
             conn.commit()
     
     def get_summary(self, vk_chat_id: str, date: str, summary_type: str = "daily") -> Optional[str]:
@@ -328,6 +342,23 @@ class DatabaseManager:
             """, (vk_chat_id, date, summary_type))
             result = cursor.fetchone()
             return result[0] if result else None
+    
+    def get_summary_with_reflection(self, vk_chat_id: str, date: str, summary_type: str = "daily") -> Dict[str, Optional[str]]:
+        """Получить все типы суммаризации"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT summary_text, reflection_text, improved_summary_text FROM summaries
+                WHERE vk_chat_id = ? AND date = ? AND summary_type = ?
+            """, (vk_chat_id, date, summary_type))
+            result = cursor.fetchone()
+            if result:
+                return {
+                    'summary': result[0],
+                    'reflection': result[1],
+                    'improved': result[2]
+                }
+            return {'summary': None, 'reflection': None, 'improved': None}
     
     def get_messages_by_date(self, vk_chat_id: str, date: str) -> List[Dict]:
         """Получить сообщения за определенную дату"""

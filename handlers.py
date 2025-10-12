@@ -17,6 +17,7 @@ from database import DatabaseManager
 from vk_integration import VKMaxIntegration
 from chat_analyzer import ChatAnalyzer
 from keyboards import *
+from utils import shorten_callback_data
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,8 @@ class BotHandlers:
             await self.select_provider_handler(update, context)
         elif data == "ai_provider_status":
             await self.ai_provider_status_handler(update, context)
+        elif data == "check_providers_availability":
+            await self.check_providers_availability_handler(update, context)
         elif data == "ai_provider_defaults":
             await self.ai_provider_defaults_handler(update, context)
         elif data.startswith("set_default_provider:"):
@@ -226,6 +229,8 @@ class BotHandlers:
             await self.analyze_with_provider_handler(update, context)
         elif data.startswith("analyze_with_openrouter_model:"):
             await self.analyze_with_openrouter_model_handler(update, context)
+        elif data.startswith("analyze_with_openrouter_model_index:"):
+            await self.analyze_with_openrouter_model_index_handler(update, context)
     
     async def _handle_manage_chats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка управления чатами"""
@@ -803,12 +808,12 @@ class BotHandlers:
                     if existing_message_ids[i]:
                         # Обновляем существующее сообщение
                         try:
-                            # Используем нашу функцию для безопасного редактирования
-                            escaped_part = TelegramMessageSender.escape_reserved_chars_for_markdown_v2(part)
+                            # Текст уже отформатирован в format_summary_for_telegram
                             await context.bot.edit_message_text(
                                 chat_id=group_id,
                                 message_id=existing_message_ids[i],
-                                text=escaped_part,
+                                text=part,
+                                parse_mode=ParseMode.MARKDOWN_V2
                             )
                         except Exception as e:
                             if "can't parse entities" in str(e).lower():
@@ -834,11 +839,10 @@ class BotHandlers:
                     else:
                         # Отправляем новое сообщение
                         try:
-                            # Используем нашу функцию для безопасной отправки
-                            escaped_part = TelegramMessageSender.escape_reserved_chars_for_markdown_v2(part)
+                            # Текст уже отформатирован в format_summary_for_telegram
                             message = await context.bot.send_message(
                                 chat_id=group_id,
-                                text=escaped_part,
+                                text=part,
                                 parse_mode=ParseMode.MARKDOWN_V2,
                                 disable_notification=True
                             )
@@ -1308,16 +1312,19 @@ class BotHandlers:
                 )
                 return
             
-            # Проверяем, доступен ли провайдер
-            is_available = await self.analyzer.validate_provider(provider_name)
-            if not is_available:
+            # Проверяем сохраненный статус доступности провайдера
+            availability_stats = self.db.get_provider_availability(provider_name)
+            if availability_stats and not availability_stats.get('is_available', True):
                 display_name = provider_info.get('display_name', provider_name.title())
                 await TelegramMessageSender.safe_edit_message_text(
                     query,
                     f"❌ Провайдер **{display_name}** недоступен\n\n"
-                    f"Проверьте настройки API ключей в конфигурации.\n\n"
+                    f"Последняя проверка: {availability_stats.get('last_check', 'Неизвестно')}\n"
+                    f"Количество ошибок: {availability_stats.get('error_count', 0)}\n\n"
+                    f"Используйте кнопку '🔍 Проверить доступность' для повторной проверки.\n\n"
                     f"Описание: {provider_info.get('description', 'Нет описания')}",
                     reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔍 Проверить доступность", callback_data="check_providers_availability"),
                         InlineKeyboardButton("🔙 Назад", callback_data="select_ai_provider")
                     ]])
                 )
@@ -1396,6 +1403,62 @@ class BotHandlers:
             await TelegramMessageSender.safe_edit_message_text(
                 query,
                 f"❌ Ошибка: {str(e)}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Назад", callback_data="ai_provider_settings")
+                ]])
+            )
+    
+    async def check_providers_availability_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик проверки доступности всех провайдеров"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Показываем сообщение о начале проверки
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                "🔍 Проверяем доступность всех провайдеров...\n\n⏳ Это может занять некоторое время.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Отмена", callback_data="ai_provider_settings")
+                ]])
+            )
+            
+            # Тестируем все провайдеры
+            test_results = await self.analyzer.test_all_providers()
+            
+            # Формируем результат
+            text = "🧪 Результаты проверки доступности провайдеров:\n\n"
+            
+            for provider_name, is_available in test_results.items():
+                status_icon = "✅" if is_available else "❌"
+                provider_info = self.analyzer.get_provider_info(provider_name)
+                display_name = provider_info.get('display_name', provider_name.title()) if provider_info else provider_name.title()
+                
+                text += f"{status_icon} *{display_name}*\n"
+                if not is_available:
+                    text += f"   ⚠️ Провайдер недоступен\n"
+                text += "\n"
+            
+            # Обновляем статус в базе данных
+            for provider_name, is_available in test_results.items():
+                self.db.update_provider_availability(provider_name, is_available)
+            
+            text += "💾 Статус сохранен в базе данных."
+            
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                text,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔄 Проверить снова", callback_data="check_providers_availability"),
+                    InlineKeyboardButton("🔙 Назад", callback_data="ai_provider_settings")
+                ]])
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка проверки доступности провайдеров: {e}")
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                f"❌ Ошибка при проверке: {str(e)}",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Назад", callback_data="ai_provider_settings")
                 ]])
@@ -1488,7 +1551,7 @@ class BotHandlers:
                 return
             
             # Получаем доступные модели
-            available_models = openrouter_provider.get_available_models()
+            available_models = await openrouter_provider.get_available_models()
             
             # Получаем текущую модель пользователя
             user_id = update.effective_user.id
@@ -1496,13 +1559,11 @@ class BotHandlers:
             
             keyboard = openrouter_model_selection_keyboard(available_models, current_model)
             
-            text = "🔗 Выберите модель OpenRouter:\n\n"
+            text = "🔗 Выберите модель OpenRouter (топ 10 бесплатных):\n\n"
             for model_id, model_info in available_models.items():
                 free_indicator = "🆓 Бесплатная" if model_info.get('free', False) else "💰 Платная"
                 current_indicator = " (текущая)" if model_id == current_model else ""
-                text += f"• *{model_info['display_name']}*\n"
-                text += f"  {free_indicator}{current_indicator}\n"
-                text += f"  {model_info['description']}\n\n"
+                text += f"• *{model_info['display_name']}* {free_indicator}{current_indicator}\n"
             
             await TelegramMessageSender.safe_edit_message_text(
                 query,
@@ -1541,7 +1602,7 @@ class BotHandlers:
                 return
             
             # Получаем информацию о модели
-            available_models = openrouter_provider.get_available_models()
+            available_models = await openrouter_provider.get_available_models()
             model_info = available_models.get(model_id, {})
             
             if not model_info:
@@ -1628,8 +1689,8 @@ class BotHandlers:
         await query.answer()
         
         try:
-            # Получаем все провайдеры (включая недоступные)
-            available_providers = await self.analyzer.get_available_providers()
+            # Получаем все провайдеры с сохраненным статусом (без проверки доступности)
+            available_providers = self.analyzer.get_providers_with_saved_status(self.db)
             provider_names = [p['name'] for p in available_providers]
             
             if not provider_names:
@@ -1656,11 +1717,20 @@ class BotHandlers:
                 is_available = provider_info.get('available', False) if provider_info else False
                 
                 # Добавляем индикатор статуса
-                status_icon = "✅" if is_available else "❌"
+                if is_available:
+                    status_icon = "✅"
+                    status_text = "Доступен"
+                else:
+                    status_icon = "❌"
+                    status_text = "Не проверен"
+                
                 keyboard.append([InlineKeyboardButton(
-                    f"{status_icon} {display_name}",
+                    f"{status_icon} {display_name} ({status_text})",
                     callback_data=f"analyze_with_provider:{provider_name}"
                 )])
+            
+            # Добавляем кнопку проверки доступности
+            keyboard.append([InlineKeyboardButton("🔍 Проверить доступность", callback_data="check_providers_availability")])
             
             # Определяем правильную кнопку "Назад" в зависимости от контекста
             date = context.user_data.get('selected_date')
@@ -1682,10 +1752,13 @@ class BotHandlers:
             
             text += "Эта модель будет использована только для текущего анализа.\n"
             text += "Ваши глобальные настройки не изменятся.\n\n"
+            text += "ℹ️ *Статус провайдеров:*\n"
+            text += "• ✅ Доступен - провайдер проверен и работает\n"
+            text += "• ❌ Не проверен - требуется проверка доступности\n\n"
             
             # Format provider status with MarkdownV2, escaping reserved characters
             for provider in available_providers:
-                status = '✅ Доступен' if provider.get('available', False) else '❌ Недоступен'
+                status = '✅ Доступен' if provider.get('available', False) else '❌ Не проверен'
                 # Don't escape here - let telegram_message_sender handle it
                 provider_name = provider.get('display_name', 'Unknown Provider')
                 text += f"• *{provider_name}*: {status}\n"
@@ -1726,24 +1799,30 @@ class BotHandlers:
                 )
                 return
             
-            # Проверяем, доступен ли провайдер
-            is_available = await self.analyzer.validate_provider(provider_name)
-            if not is_available:
+            # Проверяем сохраненный статус доступности провайдера
+            availability_stats = self.db.get_provider_availability(provider_name)
+            if availability_stats and not availability_stats.get('is_available', True):
                 display_name = provider_info.get('display_name', provider_name.title())
                 # Экранируем все тексты для безопасного использования в MarkdownV2
                 safe_display_name = TelegramMessageSender.format_text_for_markdown_v2(display_name)
                 safe_description = TelegramMessageSender.format_text_for_markdown_v2(
                     provider_info.get('description', 'Нет описания')
                 )
+                safe_last_check = TelegramMessageSender.format_text_for_markdown_v2(
+                    availability_stats.get('last_check', 'Неизвестно')
+                )
                 
                 error_text = f"❌ Провайдер *{safe_display_name}* недоступен\n\n"
-                error_text += f"Проверьте настройки API ключей в конфигурации.\n\n"
+                error_text += f"Последняя проверка: {safe_last_check}\n"
+                error_text += f"Количество ошибок: {availability_stats.get('error_count', 0)}\n\n"
+                error_text += f"Используйте кнопку '🔍 Проверить доступность' для повторной проверки\\.\n\n"
                 error_text += f"Описание: {safe_description}"
                 
                 await TelegramMessageSender.safe_edit_message_text(
                     query,
                     error_text,
                     reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔍 Проверить доступность", callback_data="check_providers_availability"),
                         InlineKeyboardButton("🔙 Назад", callback_data="select_model_for_analysis")
                     ]]),
                 )
@@ -1798,16 +1877,21 @@ class BotHandlers:
                 return
             
             # Получаем доступные модели
-            available_models = openrouter_provider.get_available_models()
+            available_models = await openrouter_provider.get_available_models()
             
             keyboard = []
-            for model_id, model_info in available_models.items():
+            # Преобразуем словарь в список для индексации
+            models_list = list(available_models.items())
+            for index, (model_id, model_info) in enumerate(models_list):
                 display_name = model_info.get('display_name', model_id)
                 free_indicator = "🆓" if model_info.get('free', False) else "💰"
                 keyboard.append([InlineKeyboardButton(
                     f"{free_indicator} {display_name}",
-                    callback_data=f"analyze_with_openrouter_model:{model_id}"
+                    callback_data=f"analyze_with_openrouter_model_index:{index}"
                 )])
+            
+            # Сохраняем полные model_id в контексте пользователя
+            context.user_data['openrouter_models_list'] = models_list
             
             # Определяем правильную кнопку "Назад" в зависимости от контекста
             date = context.user_data.get('selected_date')
@@ -1817,14 +1901,13 @@ class BotHandlers:
             else:
                 keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="select_model_for_analysis")])
             
-            text = "🔗 Выберите модель OpenRouter для анализа:\n\n"
+            text = "🔗 Выберите модель OpenRouter для анализа (топ 10 бесплатных):\n\n"
             text += "Эта модель будет использована только для текущего анализа.\n"
             text += "Ваши глобальные настройки не изменятся.\n\n"
             
             for model_id, model_info in available_models.items():
                 free_indicator = "🆓 Бесплатная" if model_info.get('free', False) else "💰 Платная"
                 text += f"• **{model_info['display_name']}** - {free_indicator}\n"
-                text += f"  {model_info['description']}\n\n"
             
             await TelegramMessageSender.safe_edit_message_text(
                 query,
@@ -1843,7 +1926,7 @@ class BotHandlers:
             )
     
     async def analyze_with_openrouter_model_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик анализа с выбранной моделью OpenRouter"""
+        """Обработчик анализа с выбранной моделью OpenRouter (старый формат)"""
         query = update.callback_query
         await query.answer()
         
@@ -1953,29 +2036,85 @@ class BotHandlers:
             
             if summary:
                 # Сохраняем суммаризацию в БД
-                self.db.save_summary(chat_id, date, summary)
+                if isinstance(summary, dict):
+                    # Новый формат с отдельными компонентами
+                    self.db.save_summary(
+                        chat_id, date, 
+                        summary.get('summary', ''),
+                        reflection_text=summary.get('reflection'),
+                        improved_summary_text=summary.get('improved')
+                    )
+                    display_text = summary.get('display_text', summary.get('summary', ''))
+                else:
+                    # Старый формат - только текст
+                    self.db.save_summary(chat_id, date, summary)
+                    display_text = summary
                 
                 # Показываем результат с Markdown форматированием
                 text = f"📊 *Анализ чата за {date}*\n\n"
-                text += f"📈 *Статистика:*\n"
-                text += f"• Сообщений: {len(messages)}\n"
-                text += f"• Дата: {date}\n"
-                text += f"• Модель: {display_name}\n"
-                if selected_model:
-                    text += f"• Модель: {selected_model}\n"
-                text += f"\n📝 *Резюме:*\n{summary}"
                 
+                # Создаем статистику в виде blockquote
+                stats_lines = [
+                    "> 📈 *Статистика*",
+                    f"> • Сообщений: {len(messages)}",
+                    f"> • Дата: {date}",
+                    f"> • Провайдер: {display_name}"
+                ]
+                if selected_model:
+                    stats_lines.append(f"> • Модель: {selected_model}")
+                
+                text += "\n".join(stats_lines) + "\n\n"
+                
+                # Создаем клавиатуру заранее
                 keyboard = [
                     [InlineKeyboardButton("📤 Вывести в группу", callback_data=f"publish_summary_{chat_id}_{date}")]
                 ]
                 
+                # Форматируем результат анализа
+                if isinstance(summary, dict):
+                    # Используем новое форматирование с тремя разделами
+                    formatted_result = TelegramFormatter.format_analysis_result_with_reflection(summary, "markdown_v2")
+                    text += formatted_result
+                else:
+                    # Старый формат - просто текст
+                    text += f"📝 *Резюме:*\n{display_text}"
+                
+                # Проверяем длину сообщения и разбиваем на части если нужно
+                if len(text) > 4000:  # Оставляем запас для кнопок
+                    logger.warning(f"⚠️ Сообщение слишком длинное ({len(text)} символов), разбиваем на части")
+                    
+                    # Разбиваем на части
+                    message_parts = TelegramFormatter.split_long_message(text, 4000, "markdown")
+                    
+                    # Отправляем первую часть с кнопками
+                    await TelegramMessageSender.safe_edit_message_text(
+                        query,
+                        message_parts[0],
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                    
+                    # Отправляем остальные части как новые сообщения
+                    for i, part in enumerate(message_parts[1:], 1):
+                        await query.message.reply_text(
+                            part,
+                            parse_mode="markdown_v2"
+                        )
+                    
+                    return
+                
                 # Добавляем кнопку "Улучшить", если есть рефлексия
                 logger.debug(f"=== CHECKING REFLECTION BUTTON ===")
-                logger.debug(f"Summary contains '🤔 Рефлексия и улучшения:': {'🤔 Рефлексия и улучшения:' in summary}")
-                logger.debug(f"Summary contains '🤔 Рефлексия и анализ:': {'🤔 Рефлексия и анализ:' in summary}")
-                logger.debug(f"Summary preview: {summary[:200]}...")
+                logger.debug(f"Summary type: {type(summary)}")
                 
-                if "🤔 Рефлексия и улучшения:" in summary or "🤔 Рефлексия и анализ:" in summary:
+                has_reflection = False
+                if isinstance(summary, dict):
+                    has_reflection = summary.get('reflection') is not None
+                    logger.debug(f"Dict format - has reflection: {has_reflection}")
+                else:
+                    has_reflection = "🤔 Рефлексия и улучшения:" in summary or "🤔 Рефлексия и анализ:" in summary
+                    logger.debug(f"String format - has reflection: {has_reflection}")
+                
+                if has_reflection:
                     logger.debug("✅ Adding 'Улучшить на основе рефлексии' button")
                     keyboard.append([InlineKeyboardButton("✨ Улучшить на основе рефлексии", callback_data=f"improve_summary_{chat_id}_{date}")])
                 else:
@@ -2230,5 +2369,45 @@ class BotHandlers:
                 f"❌ Ошибка сохранения выбора модели: {str(e)}",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Назад", callback_data="top5_models_selection")
+                ]])
+            )
+    
+    async def analyze_with_openrouter_model_index_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик анализа с выбранной моделью OpenRouter по индексу"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            index = int(query.data.split(":")[1])
+            
+            # Получаем полный model_id из сохраненного списка
+            models_list = context.user_data.get('openrouter_models_list', [])
+            if index >= len(models_list):
+                raise ValueError(f"Неверный индекс модели: {index}")
+            
+            model_id, model_info = models_list[index]
+            
+            # Сохраняем выбранную модель для анализа
+            context.user_data['selected_analysis_provider'] = 'openrouter'
+            context.user_data['selected_analysis_model'] = model_id
+            
+            # Запускаем анализ с выбранной датой
+            await self._run_analysis_with_selected_model(update, context)
+            
+        except Exception as e:
+            logger.error(f"Ошибка анализа с моделью OpenRouter по индексу: {e}")
+            # Определяем правильную кнопку "Назад" в зависимости от контекста
+            date = context.user_data.get('selected_date')
+            if date:
+                chat_id = context.user_data.get('selected_chat_id')
+                back_callback = f"select_chat_{chat_id}"
+            else:
+                back_callback = "select_model_for_analysis"
+            
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                f"❌ Ошибка: {str(e)}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Назад", callback_data=back_callback)
                 ]])
             )

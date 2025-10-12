@@ -38,9 +38,10 @@ class TelegramMessageSender:
         logger.debug("=== SAFE_EDIT_MESSAGE_TEXT START ===")
         logger.debug(f"Original text:\n{text}")
         
-        # Escape reserved characters for MarkdownV2
-        markdown_text = TelegramMessageSender.escape_reserved_chars_for_markdown_v2(text)
-        logger.debug(f"Escaped text:\n{markdown_text}")
+        # Используем умное экранирование для MarkdownV2
+        from telegram_formatter import TelegramFormatter
+        markdown_text = TelegramFormatter.smart_escape_markdown_v2(text)
+        logger.debug(f"Text for MarkdownV2:\n{markdown_text}")
         
         try:
             await query.edit_message_text(
@@ -52,7 +53,7 @@ class TelegramMessageSender:
             return True
             
         except Exception as e:
-            logger.error(f"❌ MARKDOWN_V2 parsing failed: {e}")
+            logger.error(f"❌ MARKDOWN parsing failed: {e}")
             logger.error(f"Failed text:\n{markdown_text}")
             
             # Анализируем проблемные символы
@@ -77,7 +78,7 @@ class TelegramMessageSender:
             
             raise e
     
-    # Старые функции удалены - теперь используем escape_reserved_chars_for_markdown_v2
+    # Старые функции удалены - теперь используем smart_escape_markdown_v2 из TelegramFormatter
     
     @staticmethod
     def format_text_for_html(text: str) -> str:
@@ -178,41 +179,6 @@ class TelegramMessageSender:
         else:
             return text
 
-    @staticmethod
-    def escape_reserved_chars_for_markdown_v2(text: str) -> str:
-        """
-        Smart escaping for MarkdownV2 - escape reserved characters with special handling for dots.
-        
-        Args:
-            text: The input text to escape.
-        
-        Returns:
-            Text with reserved characters escaped.
-        """
-        logger.debug("=== ESCAPE_RESERVED_CHARS_FOR_MARKDOWN_V2 START ===")
-        logger.debug(f"Input text:\n{text}")
-        
-        # MarkdownV2 reserved characters that need escaping
-        reserved_chars = ['-', '_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '=', '|', '{', '}', '!']
-        
-        # Escape all reserved characters except dots
-        escaped_text = text
-        for char in reserved_chars:
-            if char in escaped_text:
-                old_text = escaped_text
-                escaped_text = escaped_text.replace(char, f'\\{char}')
-                count = old_text.count(char)
-                logger.debug(f"Escaped '{char}' {count} times")
-        
-        # Special handling for dots - escape all dots to be safe
-        import re
-        
-        # Escape all dots - it's safer to escape all of them
-        escaped_text = escaped_text.replace('.', '\\.')
-        
-        logger.debug(f"Final result:\n{escaped_text}")
-        logger.debug("=== ESCAPE_RESERVED_CHARS_FOR_MARKDOWN_V2 END ===")
-        return escaped_text
 
     @staticmethod
     def convert_markdown_to_html(text: str) -> str:

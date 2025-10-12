@@ -5,6 +5,7 @@ import json
 import os
 from typing import List, Dict
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from utils import shorten_callback_data
 
 def main_menu_keyboard():
     """Главное меню"""
@@ -190,6 +191,7 @@ def ai_provider_settings_keyboard(user_preferences: Dict = None) -> InlineKeyboa
         [InlineKeyboardButton("🎯 Выбрать модель", callback_data="select_ai_provider")],
         [InlineKeyboardButton("⚙️ Настройки по умолчанию", callback_data="ai_provider_defaults")],
         [InlineKeyboardButton("📊 Статус провайдеров", callback_data="ai_provider_status")],
+        [InlineKeyboardButton("🔍 Проверить доступность", callback_data="check_providers_availability")],
         [InlineKeyboardButton("🔙 Назад", callback_data="back_to_settings")]
     ]
     return InlineKeyboardMarkup(buttons)
@@ -249,7 +251,7 @@ def openrouter_model_selection_keyboard(available_models: Dict[str, Dict], curre
         
         buttons.append([InlineKeyboardButton(
             f"{prefix}{free_indicator} {display_name}",
-            callback_data=f"select_openrouter_model:{model_id}"
+            callback_data=shorten_callback_data(f"select_openrouter_model:{model_id}")
         )])
     
     buttons.append([InlineKeyboardButton("🔙 Назад к провайдерам", callback_data="select_ai_provider")])
@@ -307,7 +309,7 @@ def top5_models_keyboard() -> InlineKeyboardMarkup:
         for i, model in enumerate(top5_models, 1):
             # Создаем кнопку для каждой модели
             button_text = f"{i}. {model['name']}"
-            callback_data = f"select_top5_model:{model['id']}"
+            callback_data = shorten_callback_data(f"select_top5_model:{model['id']}")
             buttons.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
         
         # Добавляем кнопки навигации
