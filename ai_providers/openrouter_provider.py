@@ -451,7 +451,7 @@ class OpenRouterProvider(BaseAIProvider):
     
     async def generate_response(self, prompt: str) -> Optional[str]:
         """
-        Генерировать ответ на произвольный промпт
+        Генерировать ответ на произвольный промпт с retry логикой для 429 ошибок
         
         Args:
             prompt: Текст промпта для генерации ответа
@@ -459,41 +459,63 @@ class OpenRouterProvider(BaseAIProvider):
         Returns:
             Сгенерированный ответ или None при ошибке
         """
-        try:
-            if not self.client:
-                self.logger.error("❌ Клиент OpenRouter не инициализирован")
-                return None
-            
-            self.logger.info(f"🤖 Генерируем ответ через OpenRouter на промпт длиной {len(prompt)} символов")
-            
-            data = {
-                "model": self.current_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 2000,
-                "temperature": 0.3
-            }
-            
-            response = await self.client.post(
-                f"{self.base_url}/chat/completions",
-                json=data
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                if result.get("choices") and result["choices"][0].get("message", {}).get("content"):
-                    content = result["choices"][0]["message"]["content"]
-                    self.logger.info(f"✅ Получен ответ от OpenRouter длиной {len(content)} символов")
-                    return content
-                else:
-                    self.logger.warning("⚠️ OpenRouter вернул пустой ответ")
+        import asyncio
+        
+        max_attempts = 4
+        delay_seconds = 5
+        
+        for attempt in range(1, max_attempts + 1):
+            try:
+                if not self.client:
+                    self.logger.error("❌ Клиент OpenRouter не инициализирован")
                     return None
-            else:
-                self.logger.error(f"❌ OpenRouter вернул ошибку: {response.status_code}")
-                return None
                 
-        except Exception as e:
-            self.logger.error(f"❌ Ошибка генерации ответа через OpenRouter: {e}")
-            return None
+                if attempt > 1:
+                    self.logger.info(f"🔄 Попытка {attempt}/{max_attempts} после ожидания {delay_seconds}с")
+                else:
+                    self.logger.info(f"🤖 Генерируем ответ через OpenRouter на промпт длиной {len(prompt)} символов")
+                
+                data = {
+                    "model": self.current_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 2000,
+                    "temperature": 0.3
+                }
+                
+                response = await self.client.post(
+                    f"{self.base_url}/chat/completions",
+                    json=data
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if result.get("choices") and result["choices"][0].get("message", {}).get("content"):
+                        content = result["choices"][0]["message"]["content"]
+                        self.logger.info(f"✅ Получен ответ от OpenRouter длиной {len(content)} символов")
+                        return content
+                    else:
+                        self.logger.warning("⚠️ OpenRouter вернул пустой ответ")
+                        return None
+                elif response.status_code == 429:
+                    # Rate limit - retry with delay
+                    self.logger.warning(f"⚠️ Rate limit (429) - попытка {attempt}/{max_attempts}")
+                    if attempt < max_attempts:
+                        self.logger.info(f"⏳ Ожидание {delay_seconds} секунд перед повтором...")
+                        await asyncio.sleep(delay_seconds)
+                        continue  # Retry
+                    else:
+                        self.logger.error(f"❌ Превышен лимит попыток ({max_attempts}), rate limit не снят")
+                        return None
+                else:
+                    # Other errors - fail immediately
+                    self.logger.error(f"❌ OpenRouter вернул ошибку: {response.status_code}")
+                    return None
+                    
+            except Exception as e:
+                self.logger.error(f"❌ Ошибка генерации ответа через OpenRouter: {e}")
+                return None
+        
+        return None
     
     def get_provider_info(self) -> Dict[str, Any]:
         """
