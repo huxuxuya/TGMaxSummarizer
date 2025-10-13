@@ -539,7 +539,7 @@ class ChatAnalyzer:
                                     'summary': summary,
                                     'reflection': reflection,
                                     'improved': improved_summary,
-                                    'display_text': f"*📝 Исходная суммаризация:*\n{summary}\n\n> 🤔 *Рефлексия и анализ*\n> {escaped_reflection}\n\n> ✨ *Улучшенная суммаризация*\n> {escaped_improved}",
+                                    'display_text': f"*📝 Исходная суммаризация:*\n{summary}\n\n🤔 *Рефлексия и анализ*\n{escaped_reflection}\n\n✨ *Улучшенная суммаризация*\n{escaped_improved}",
                                     'display_text_alt': f"*📝 Исходная суммаризация:*\n{summary}\n\n||🤔 Рефлексия и анализ:||\n||{escaped_reflection}||\n\n||✨ Улучшенная суммаризация:||\n||{escaped_improved}||"
                                 }
                                 
@@ -556,7 +556,7 @@ class ChatAnalyzer:
                                     'summary': summary,
                                     'reflection': reflection,
                                     'improved': None,
-                                    'display_text': f"*📝 Исходная суммаризация:*\n{summary}\n\n> 🤔 *Рефлексия и улучшения*\n> {escaped_reflection}",
+                                    'display_text': f"*📝 Исходная суммаризация:*\n{summary}\n\n🤔 *Рефлексия и улучшения*\n{escaped_reflection}",
                                     'display_text_alt': f"*📝 Исходная суммаризация:*\n{summary}\n\n||🤔 Рефлексия и улучшения:||\n||{escaped_reflection}||"
                                 }
                                 
@@ -572,7 +572,7 @@ class ChatAnalyzer:
                                 'summary': summary,
                                 'reflection': reflection,
                                 'improved': None,
-                                'display_text': f"*📝 Исходная суммаризация:*\n{summary}\n\n> 🤔 *Рефлексия и улучшения*\n> {escaped_reflection}",
+                                'display_text': f"*📝 Исходная суммаризация:*\n{summary}\n\n🤔 *Рефлексия и улучшения*\n{escaped_reflection}",
                                 'display_text_alt': f"*📝 Исходная суммаризация:*\n{summary}\n\n||🤔 Рефлексия и улучшения:||\n||{escaped_reflection}||"
                             }
                             
