@@ -53,29 +53,8 @@ class TelegramMessageSender:
             return True
             
         except Exception as e:
-            logger.error(f"❌ MARKDOWN parsing failed: {e}")
+            logger.error(f"❌ MARKDOWN_V2 failed: {e}")
             logger.error(f"Failed text:\n{markdown_text}")
-            
-            # Анализируем проблемные символы
-            logger.error("=== ANALYZING PROBLEMATIC CHARACTERS ===")
-            reserved_chars = ['-', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '=', '|', '{', '}', '.', '!']
-            for char in reserved_chars:
-                count = markdown_text.count(char)
-                if count > 0:
-                    logger.error(f"Character '{char}' appears {count} times")
-                    # Показываем первые несколько вхождений
-                    pos = 0
-                    shown = 0
-                    while pos != -1 and shown < 3:
-                        pos = markdown_text.find(char, pos)
-                        if pos != -1:
-                            start = max(0, pos - 20)
-                            end = min(len(markdown_text), pos + 20)
-                            context = markdown_text[start:end]
-                            logger.error(f"  Position {pos}: ...{context}...")
-                            pos += 1
-                            shown += 1
-            
             raise e
     
     # Старые функции удалены - теперь используем smart_escape_markdown_v2 из TelegramFormatter

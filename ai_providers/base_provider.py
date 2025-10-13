@@ -23,6 +23,7 @@ class BaseAIProvider(ABC):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.name = self.get_name()
         self.is_initialized = False
+        self.llm_logger = None
     
     @abstractmethod
     async def summarize_chat(self, messages: List[Dict], chat_context: Optional[Dict] = None) -> str:
@@ -104,7 +105,8 @@ class BaseAIProvider(ABC):
             'gigachat': 'GigaChat',
             'chatgpt': 'ChatGPT',
             'openrouter': 'OpenRouter',
-            'gemini': 'Gemini'
+            'gemini': 'Gemini',
+            'ollama': 'Ollama (Локальная)'
         }
         return name_mapping.get(self.name, self.name.title())
     
@@ -215,6 +217,16 @@ class BaseAIProvider(ABC):
     def __str__(self) -> str:
         """Строковое представление провайдера"""
         return f"{self.get_display_name()} Provider"
+    
+    def set_llm_logger(self, llm_logger):
+        """
+        Установить логгер для записи взаимодействий с LLM
+        
+        Args:
+            llm_logger: Экземпляр LLMLogger
+        """
+        self.llm_logger = llm_logger
+        self.logger.debug(f"📝 LLM Logger установлен для провайдера {self.name}")
     
     def __repr__(self) -> str:
         """Представление провайдера для отладки"""

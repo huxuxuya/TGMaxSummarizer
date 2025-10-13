@@ -404,7 +404,16 @@ class OpenRouterProvider(BaseAIProvider):
             
             # Вызываем OpenRouter API
             self.logger.info("🤖 Отправляем запрос в OpenRouter...")
+            
+            # Логируем запрос если логгер установлен
+            if self.llm_logger:
+                self.llm_logger.log_llm_request(formatted_text, "summarization")
+            
             summary = await self._call_openrouter_api(formatted_text)
+            
+            # Логируем ответ если логгер установлен
+            if self.llm_logger and summary:
+                self.llm_logger.log_llm_response(summary, "summarization")
             
             if summary:
                 self.logger.info("✅ Суммаризация получена от OpenRouter")
@@ -478,6 +487,12 @@ class OpenRouterProvider(BaseAIProvider):
                     self.logger.debug(f"Prompt length: {len(prompt)}")
                     self.logger.debug(f"Prompt preview: {prompt[:200]}...")
                     self.logger.debug(f"=== END INPUT ===")
+                    
+                    # Логируем запрос если логгер установлен (только на первой попытке)
+                    if self.llm_logger:
+                        # Определяем тип запроса по содержимому промпта
+                        request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
+                        self.llm_logger.log_llm_request(prompt, request_type)
                 
                 data = {
                     "model": self.current_model,
@@ -500,6 +515,13 @@ class OpenRouterProvider(BaseAIProvider):
                         self.logger.debug(f"Response length: {len(content)}")
                         self.logger.debug(f"Response preview: {content[:200]}...")
                         self.logger.debug(f"=== END OUTPUT ===")
+                        
+                        # Логируем ответ если логгер установлен
+                        if self.llm_logger:
+                            # Определяем тип ответа по содержимому промпта
+                            request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
+                            self.llm_logger.log_llm_response(content, request_type)
+                        
                         return content
                     else:
                         self.logger.warning("⚠️ OpenRouter вернул пустой ответ")

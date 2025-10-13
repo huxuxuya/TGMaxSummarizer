@@ -47,7 +47,16 @@ class GigaChatProvider(BaseAIProvider):
             
             # Вызываем GigaChat API
             self.logger.info("🤖 Отправляем запрос в GigaChat...")
+            
+            # Логируем запрос если логгер установлен
+            if self.llm_logger:
+                self.llm_logger.log_llm_request(formatted_text, "summarization")
+            
             summary = await self._call_gigachat_api_for_summarization(formatted_text)
+            
+            # Логируем ответ если логгер установлен
+            if self.llm_logger and summary:
+                self.llm_logger.log_llm_response(summary, "summarization")
             
             if summary:
                 self.logger.info("✅ Суммаризация получена от GigaChat")
@@ -101,6 +110,12 @@ class GigaChatProvider(BaseAIProvider):
                 self.logger.error("❌ Не удалось получить токен доступа GigaChat")
                 return None
             
+            # Логируем запрос если логгер установлен
+            if self.llm_logger:
+                # Определяем тип запроса по содержимому промпта
+                request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
+                self.llm_logger.log_llm_request(prompt, request_type)
+            
             # Execute API call with provided prompt (NO MODIFICATION!)
             response = await self._execute_api_call(prompt, temperature=0.3, max_tokens=2000)
             
@@ -110,6 +125,13 @@ class GigaChatProvider(BaseAIProvider):
                 self.logger.debug(f"Response length: {len(response)}")
                 self.logger.debug(f"Response preview: {response[:200]}...")
                 self.logger.debug(f"=== END OUTPUT ===")
+                
+                # Логируем ответ если логгер установлен
+                if self.llm_logger:
+                    # Определяем тип ответа по содержимому промпта
+                    request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
+                    self.llm_logger.log_llm_response(response, request_type)
+                
                 return response
             else:
                 self.logger.warning("⚠️ GigaChat вернул пустой ответ")

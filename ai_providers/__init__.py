@@ -30,13 +30,20 @@ try:
 except ImportError as e:
     print(f"⚠️ Не удалось загрузить Gemini провайдер: {e}")
 
+try:
+    from .ollama_provider import OllamaProvider
+    ProviderFactory.register_provider('ollama', OllamaProvider)
+except ImportError as e:
+    print(f"⚠️ Не удалось загрузить Ollama провайдер: {e}")
+
 __all__ = [
     'BaseAIProvider',
     'ProviderFactory',
     'GigaChatProvider',
     'ChatGPTProvider', 
     'OpenRouterProvider',
-    'GeminiProvider'
+    'GeminiProvider',
+    'OllamaProvider'
 ]
 
 __version__ = '1.0.0'

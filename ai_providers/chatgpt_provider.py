@@ -46,7 +46,16 @@ class ChatGPTProvider(BaseAIProvider):
             
             # Вызываем ChatGPT API
             self.logger.info("🤖 Отправляем запрос в ChatGPT...")
+            
+            # Логируем запрос если логгер установлен
+            if self.llm_logger:
+                self.llm_logger.log_llm_request(formatted_text, "summarization")
+            
             summary = await self._call_chatgpt_api(formatted_text)
+            
+            # Логируем ответ если логгер установлен
+            if self.llm_logger and summary:
+                self.llm_logger.log_llm_response(summary, "summarization")
             
             if summary:
                 self.logger.info("✅ Суммаризация получена от ChatGPT")
@@ -107,6 +116,12 @@ class ChatGPTProvider(BaseAIProvider):
             self.logger.debug(f"Prompt preview: {prompt[:200]}...")
             self.logger.debug(f"=== END INPUT ===")
             
+            # Логируем запрос если логгер установлен
+            if self.llm_logger:
+                # Определяем тип запроса по содержимому промпта
+                request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
+                self.llm_logger.log_llm_request(prompt, request_type)
+            
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
@@ -121,6 +136,13 @@ class ChatGPTProvider(BaseAIProvider):
                 self.logger.debug(f"Response length: {len(content)}")
                 self.logger.debug(f"Response preview: {content[:200]}...")
                 self.logger.debug(f"=== END OUTPUT ===")
+                
+                # Логируем ответ если логгер установлен
+                if self.llm_logger:
+                    # Определяем тип ответа по содержимому промпта
+                    request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
+                    self.llm_logger.log_llm_response(content, request_type)
+                
                 return content
             else:
                 self.logger.warning("⚠️ ChatGPT вернул пустой ответ")

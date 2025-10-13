@@ -7,8 +7,9 @@ from typing import List, Dict, Optional, Any
 from datetime import datetime
 
 from ai_providers import ProviderFactory
-from config import AI_PROVIDERS, DEFAULT_AI_PROVIDER, FALLBACK_PROVIDERS, ENABLE_REFLECTION, AUTO_IMPROVE_SUMMARY
+from config import AI_PROVIDERS, DEFAULT_AI_PROVIDER, FALLBACK_PROVIDERS, ENABLE_REFLECTION, AUTO_IMPROVE_SUMMARY, ENABLE_LLM_LOGGING, LLM_LOGS_DIR
 from telegram_formatter import TelegramFormatter
+from llm_logger import LLMLogger
 
 logger = logging.getLogger(__name__)
 
@@ -402,11 +403,22 @@ class ChatAnalyzer:
             if model_id:
                 logger.info(f"🔗 Модель: {model_id}")
             
+            # Создаем LLM логгер если включено логирование
+            llm_logger = None
+            if ENABLE_LLM_LOGGING:
+                llm_logger = LLMLogger(LLM_LOGS_DIR)
+                llm_logger.set_session_info(provider_name, model_id, None, user_id)
+                logger.info(f"📁 LLM Logger создан: {llm_logger.get_logs_path()}")
+            
             # Создаем провайдера
             provider = self.provider_factory.create_provider(provider_name, self.config)
             if not provider:
                 logger.error(f"❌ Не удалось создать провайдер: {provider_name}")
                 return None
+            
+            # Устанавливаем логгер в провайдер
+            if llm_logger:
+                provider.set_llm_logger(llm_logger)
             
             # Инициализируем провайдера
             if not await provider.initialize():
@@ -430,6 +442,10 @@ class ChatAnalyzer:
                 logger.warning("⚠️ Не удалось отформатировать текст для анализа")
                 return None
             
+            # Логируем форматированные сообщения
+            if llm_logger:
+                llm_logger.log_formatted_messages(formatted_text, len(optimized_messages))
+            
             # Создаем контекст чата
             chat_context = {
                 'total_messages': len(messages),
@@ -441,6 +457,23 @@ class ChatAnalyzer:
             # Выполняем суммаризацию
             summary = await provider.summarize_chat(optimized_messages, chat_context)
             
+            # Проверяем успешность суммаризации - если не получилось, прерываем
+            if not summary:
+                logger.error(f"❌ Не удалось получить суммаризацию от {provider_name}")
+                logger.warning("⚠️ Прерываем процесс - рефлексия и улучшение не будут выполнены")
+                
+                # Логируем неудачную попытку
+                if llm_logger:
+                    llm_logger.log_session_summary({
+                        'summary': None,
+                        'reflection': None,
+                        'improved': None,
+                        'error': 'Суммаризация не выполнена'
+                    })
+                
+                return None
+            
+            # Суммаризация успешна, продолжаем
             if summary:
                 logger.info(f"✅ Суммаризация получена от {provider_name}")
                 if model_id:
@@ -458,9 +491,31 @@ class ChatAnalyzer:
                     logger.debug(f"Optimized messages count: {len(optimized_messages)}")
                     logger.debug(f"Chat context: {chat_context}")
                     
-                    reflection = await self.perform_reflection(provider, summary, optimized_messages, chat_context)
+                    reflection = await self.perform_reflection(provider, summary, optimized_messages, chat_context, llm_logger)
                     logger.debug(f"Reflection result: {reflection}")
                     
+                    # Проверяем успешность рефлексии
+                    if not reflection:
+                        logger.warning("⚠️ Рефлексия не выполнена, возвращаем исходную суммаризацию")
+                        logger.warning("⚠️ Прерываем процесс - улучшение суммаризации не будет выполнено")
+                        logger.debug("=== REFLECTION FAILED ===")
+                        result = {
+                            'summary': summary,
+                            'reflection': None,
+                            'improved': None,
+                            'display_text': f"*📝 Исходная суммаризация:*\n{summary}\n\n*❌ Ошибка:* Рефлексия не была выполнена",
+                            'display_text_alt': f"*📝 Исходная суммаризация:*\n{summary}\n\n*❌ Ошибка:* Рефлексия не была выполнена"
+                        }
+                        
+                        # Логируем результаты
+                        if llm_logger:
+                            llm_logger.log_raw_result(summary)
+                            llm_logger.log_formatted_result(result['display_text'])
+                            llm_logger.log_session_summary(result)
+                        
+                        return result
+                    
+                    # Рефлексия успешна, продолжаем
                     if reflection:
                         logger.info("🔄 Рефлексия выполнена успешно")
                         logger.debug(f"Reflection text: {reflection[:200]}...")
@@ -471,65 +526,84 @@ class ChatAnalyzer:
                         # Автоматически улучшаем суммаризацию, если включено
                         if AUTO_IMPROVE_SUMMARY:
                             improved_summary = await self.improve_summary_with_reflection(
-                                provider, summary, reflection, optimized_messages, chat_context
+                                provider, summary, reflection, optimized_messages, chat_context, llm_logger
                             )
                             if improved_summary:
                                 logger.info("✨ Суммаризация автоматически улучшена")
                                 escaped_improved = improved_summary
                                 # Возвращаем структурированный результат с сворачиваемым текстом
-                                return {
+                                result = {
                                     'summary': summary,
                                     'reflection': reflection,
                                     'improved': improved_summary,
                                     'display_text': f"*📝 Исходная суммаризация:*\n{summary}\n\n> 🤔 *Рефлексия и анализ*\n> {escaped_reflection}\n\n> ✨ *Улучшенная суммаризация*\n> {escaped_improved}",
                                     'display_text_alt': f"*📝 Исходная суммаризация:*\n{summary}\n\n||🤔 Рефлексия и анализ:||\n||{escaped_reflection}||\n\n||✨ Улучшенная суммаризация:||\n||{escaped_improved}||"
                                 }
+                                
+                                # Логируем результаты
+                                if llm_logger:
+                                    llm_logger.log_raw_result(summary)
+                                    llm_logger.log_formatted_result(result['display_text'])
+                                    llm_logger.log_session_summary(result)
+                                
+                                return result
                             else:
                                 logger.warning("⚠️ Не удалось улучшить суммаризацию, показываем с рефлексией")
-                                return {
+                                result = {
                                     'summary': summary,
                                     'reflection': reflection,
                                     'improved': None,
                                     'display_text': f"*📝 Исходная суммаризация:*\n{summary}\n\n> 🤔 *Рефлексия и улучшения*\n> {escaped_reflection}",
                                     'display_text_alt': f"*📝 Исходная суммаризация:*\n{summary}\n\n||🤔 Рефлексия и улучшения:||\n||{escaped_reflection}||"
                                 }
+                                
+                                # Логируем результаты
+                                if llm_logger:
+                                    llm_logger.log_raw_result(summary)
+                                    llm_logger.log_formatted_result(result['display_text'])
+                                    llm_logger.log_session_summary(result)
+                                
+                                return result
                         else:
-                            return {
+                            result = {
                                 'summary': summary,
                                 'reflection': reflection,
                                 'improved': None,
                                 'display_text': f"*📝 Исходная суммаризация:*\n{summary}\n\n> 🤔 *Рефлексия и улучшения*\n> {escaped_reflection}",
                                 'display_text_alt': f"*📝 Исходная суммаризация:*\n{summary}\n\n||🤔 Рефлексия и улучшения:||\n||{escaped_reflection}||"
                             }
-                    else:
-                        logger.warning("⚠️ Рефлексия не выполнена, возвращаем исходную суммаризацию")
-                        logger.debug("=== REFLECTION FAILED ===")
-                        return {
-                            'summary': summary,
-                            'reflection': None,
-                            'improved': None,
-                            'display_text': f"*📝 Исходная суммаризация:*\n{summary}\n\n*❌ Ошибка:* Рефлексия не была выполнена",
-                            'display_text_alt': f"*📝 Исходная суммаризация:*\n{summary}\n\n*❌ Ошибка:* Рефлексия не была выполнена"
-                        }
+                            
+                            # Логируем результаты
+                            if llm_logger:
+                                llm_logger.log_raw_result(summary)
+                                llm_logger.log_formatted_result(result['display_text'])
+                                llm_logger.log_session_summary(result)
+                            
+                            return result
                 else:
                     logger.info("ℹ️ Рефлексия отключена в настройках")
                     logger.debug("=== REFLECTION DISABLED ===")
-                    return {
+                    result = {
                         'summary': summary,
                         'reflection': None,
                         'improved': None,
                         'display_text': f"*📝 Исходная суммаризация:*\n{summary}\n\n*ℹ️ Информация:* Рефлексия отключена в настройках",
                         'display_text_alt': f"*📝 Исходная суммаризация:*\n{summary}\n\n*ℹ️ Информация:* Рефлексия отключена в настройках"
                     }
-            else:
-                logger.error(f"❌ Не удалось получить суммаризацию от {provider_name}")
-                return None
+                    
+                    # Логируем результаты
+                    if llm_logger:
+                        llm_logger.log_raw_result(summary)
+                        llm_logger.log_formatted_result(result['display_text'])
+                        llm_logger.log_session_summary(result)
+                    
+                    return result
                 
         except Exception as e:
             logger.error(f"❌ Ошибка анализа с конкретной моделью: {e}")
             return None
     
-    async def perform_reflection(self, provider, summary: str, messages: List[Dict], chat_context: Dict) -> Optional[str]:
+    async def perform_reflection(self, provider, summary: str, messages: List[Dict], chat_context: Dict, llm_logger=None) -> Optional[str]:
         """
         Выполняет рефлексию над суммаризацией для её улучшения
         
@@ -622,7 +696,7 @@ class ChatAnalyzer:
 
         return prompt
     
-    async def improve_summary_with_reflection(self, provider, original_summary: str, reflection: str, messages: List[Dict], chat_context: Dict) -> Optional[str]:
+    async def improve_summary_with_reflection(self, provider, original_summary: str, reflection: str, messages: List[Dict], chat_context: Dict, llm_logger=None) -> Optional[str]:
         """
         Улучшает суммаризацию на основе рефлексии
         

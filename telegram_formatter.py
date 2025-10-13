@@ -594,12 +594,46 @@ class TelegramFormatter:
         if not text:
             return text
         
+        # Улучшенная обработка форматирования
+        import re
+        
+        # 1. Сначала конвертируем **text** (Markdown) в *text* (MarkdownV2) для жирного текста
+        # Находим все пары **text** и заменяем на *text*
+        bold_pattern = r'\*\*([^*\n]+)\*\*'
+        text = re.sub(bold_pattern, r'*\1*', text)
+        
+        # 2. Обрабатываем курсивное форматирование _текст_
+        # Находим все корректные пары _текст_ и временно заменяем их на плейсхолдеры
+        placeholders = []
+        # Более строгое регулярное выражение: _ должен быть окружен пробелами или знаками препинания
+        italic_pattern = r'(?<![a-zA-Z0-9])_([^_\n]+)_(?![a-zA-Z0-9])'
+        matches = list(re.finditer(italic_pattern, text))
+        
+        for i, match in enumerate(matches):
+            inner_text = match.group(1).strip()
+            if inner_text and len(inner_text) > 0:
+                placeholder = f"__CURSIVE_{i}__"
+                placeholders.append((placeholder, match.group(0)))
+                text = text.replace(match.group(0), placeholder, 1)
+        
+        # 3. Восстанавливаем корректное курсивное форматирование ПЕРЕД экранированием
+        for placeholder, original in placeholders:
+            text = text.replace(placeholder, original)
+        
+        # 4. Теперь экранируем только проблемные _ (одиночные, которые могут вызвать ошибки парсинга)
+        # НЕ экранируем _ внутри обычных слов (например, parse_mode, user_id)
+        # Экранируем только одиночные _ или _ в начале/конце слов
+        import re
+        # Находим одиночные _ или _ в начале/конце слов, но не внутри слов
+        text = re.sub(r'(?<![a-zA-Z0-9])_(?![a-zA-Z0-9])', r'\\_', text)
+        
         # Символы, которые нужно экранировать для MarkdownV2
         # НЕ экранируем: *, ` (нужны для форматирования)
-        # Экранируем: [, ], (, ), ~, ., !, -, +, =, |, {, }, #, _ (могут вызвать проблемы)
+        # Экранируем: [, ], (, ), ~, ., !, -, +, =, |, {, }, # (могут вызвать проблемы)
         # > обрабатываем контекстно - не экранируем в начале строки (блоки цитат)
-        # _ экранируем только если он не используется для форматирования
-        problematic_chars = ['[', ']', '(', ')', '~', '.', '!', '-', '+', '=', '|', '{', '}', '#', '_']
+        # _ уже обработан выше
+        # Добавляем длинный дефис – который может вызывать проблемы
+        problematic_chars = ['[', ']', '(', ')', '~', '.', '!', '-', '+', '=', '|', '{', '}', '#', '–']
         
         # Обрабатываем построчно для сохранения блоков цитат
         lines = text.split('\n')
@@ -640,32 +674,9 @@ class TelegramFormatter:
         # Экранируем обратные слеши в первую очередь
         result = result.replace('\\', '\\\\')
         
-        # Специальная обработка для символа _
-        if '_' in chars_to_escape:
-            # Экранируем _ только если он не используется для форматирования
-            # Ищем паттерны _текст_ и не экранируем их
-            import re
-            # Временно заменяем форматирование _текст_ на плейсхолдеры
-            placeholders = []
-            pattern = r'_([^_]+)_'
-            matches = re.finditer(pattern, result)
-            
-            for i, match in enumerate(matches):
-                placeholder = f"__PLACEHOLDER_{i}__"
-                placeholders.append((placeholder, match.group(0)))
-                result = result.replace(match.group(0), placeholder, 1)
-            
-            # Экранируем оставшиеся _
-            result = result.replace('_', '\\_')
-            
-            # Восстанавливаем форматирование
-            for placeholder, original in placeholders:
-                result = result.replace(placeholder, original)
-        
-        # Экранируем остальные символы (кроме _)
+        # Экранируем все символы из списка
         for char in chars_to_escape:
-            if char != '_':  # _ уже обработан выше
-                result = result.replace(char, f'\\{char}')
+            result = result.replace(char, f'\\{char}')
         
         return result
     
@@ -784,3 +795,52 @@ class TelegramFormatter:
         html = html.replace('&lt;code&gt;', '<code>').replace('&lt;/code&gt;', '</code>')
         
         return html
+    
+    @staticmethod
+    def remove_markdown_formatting(text: str) -> str:
+        """
+        Удаляет все markdown форматирование из текста, оставляя только обычный текст
+        
+        Args:
+            text: Текст с markdown форматированием
+            
+        Returns:
+            Обычный текст без форматирования
+        """
+        if not text:
+            return text
+        
+        import re
+        
+        # Удаляем markdown форматирование
+        # Жирный текст: **text** или __text__
+        text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+        text = re.sub(r'__(.*?)__', r'\1', text)
+        
+        # Курсив: *text* или _text_
+        text = re.sub(r'\*(.*?)\*', r'\1', text)
+        text = re.sub(r'_(.*?)_', r'\1', text)
+        
+        # Код: `text`
+        text = re.sub(r'`(.*?)`', r'\1', text)
+        
+        # Блоки кода: ```text```
+        text = re.sub(r'```.*?\n(.*?)\n```', r'\1', text, flags=re.DOTALL)
+        
+        # Ссылки: [text](url)
+        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+        
+        # Заголовки: # text
+        text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+        
+        # Списки: - text или * text
+        text = re.sub(r'^[\s]*[-*+]\s*', '', text, flags=re.MULTILINE)
+        
+        # Блоки цитат: > text
+        text = re.sub(r'^>\s*', '', text, flags=re.MULTILINE)
+        
+        # Убираем лишние пробелы и переносы строк
+        text = re.sub(r'\n\s*\n', '\n\n', text)
+        text = text.strip()
+        
+        return text

@@ -48,6 +48,14 @@ AI_PROVIDERS = {
         'enabled': True,
         'display_name': 'Gemini',
         'description': 'Google Gemini Pro'
+    },
+    'ollama': {
+        'base_url': os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+        'model': os.getenv("OLLAMA_MODEL", "gpt-oss:20b"),
+        'timeout': int(os.getenv("OLLAMA_TIMEOUT", "120")),
+        'enabled': True,
+        'display_name': 'Ollama (Локальная)',
+        'description': 'Локальная модель gpt-oss:20b через Ollama'
     }
 }
 
@@ -81,3 +89,8 @@ MAX_MESSAGES_PER_LOAD = 1000  # Максимальное количество с
 # Logging Configuration
 LOG_LEVEL = "DEBUG"
 LOG_FORMAT = "[%(asctime)s] [%(levelname)s] %(message)s"
+
+# LLM Logging Configuration
+LLM_LOGS_DIR = os.getenv("LLM_LOGS_DIR", "llm_logs")
+ENABLE_LLM_LOGGING = os.getenv("ENABLE_LLM_LOGGING", "true").lower() == "true"
+LLM_LOGS_RETENTION_DAYS = int(os.getenv("LLM_LOGS_RETENTION_DAYS", "30"))
