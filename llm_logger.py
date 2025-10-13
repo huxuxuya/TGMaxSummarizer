@@ -41,6 +41,16 @@ class LLMLogger:
         
         logger.info(f"📁 LLM Logger инициализирован: {self.date_dir}")
     
+    def clear_date_logs(self):
+        """Remove all existing log files for this date before starting new session"""
+        import shutil
+        
+        if self.date_dir.exists():
+            logger.info(f"🗑️  Clearing old logs for {self.date}")
+            shutil.rmtree(self.date_dir)
+            self.date_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"✅ Old logs cleared, fresh directory created")
+    
     def set_session_info(self, provider_name: str, model_name: Optional[str] = None, 
                         chat_id: Optional[str] = None, user_id: Optional[int] = None):
         """

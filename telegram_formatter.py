@@ -4,13 +4,63 @@
 """
 import re
 import logging
+from enum import Enum
 from typing import Optional, List, Union
 from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
 
+
+class TextContentType(Enum):
+    """
+    Тип контента для правильного выбора метода экранирования.
+    
+    Используется для предотвращения двойного экранирования и корректной
+    обработки разных типов текста в Telegram сообщениях.
+    """
+    RAW = "raw"
+    """Сырой текст без форматирования. Требует полного экранирования всех спецсимволов."""
+    
+    FORMATTED = "formatted"
+    """Текст с Markdown форматированием (**bold**, _italic_). Требует умного экранирования."""
+    
+    TECHNICAL = "technical"
+    """Технический текст (имена переменных, коды ошибок). Будет обернут в backticks."""
+
 class TelegramFormatter:
     """Класс для безопасного форматирования текста для Telegram"""
+    
+    @staticmethod
+    def _parse_mode_to_string(parse_mode: Union[ParseMode, str]) -> str:
+        """
+        Конвертирует ParseMode enum в строку для внутреннего использования
+        
+        Args:
+            parse_mode: ParseMode enum или строка
+            
+        Returns:
+            Строковое представление parse_mode
+        """
+        if isinstance(parse_mode, ParseMode):
+            # Конвертируем ParseMode enum в строку
+            enum_name = str(parse_mode).split('.')[-1]
+            
+            # Специальные случаи
+            if enum_name == "MARKDOWN_V2":
+                return "markdown_v2"
+            elif enum_name == "MARKDOWN":
+                return "markdown"
+            elif enum_name == "HTML":
+                return "html"
+            else:
+                # Общий случай: заменяем заглавные буквы на подчеркивания + строчные
+                import re
+                result = re.sub(r'([A-Z])', r'_\1', enum_name).lower()
+                # Убираем ведущий подчеркивание если есть
+                if result.startswith('_'):
+                    result = result[1:]
+                return result
+        return parse_mode
     
     # Символы, которые нужно экранировать в MarkdownV2
     MARKDOWN_V2_ESCAPE_CHARS = [
@@ -393,7 +443,7 @@ class TelegramFormatter:
             return text
     
     @staticmethod
-    def split_long_message(text: str, max_length: int = 4096, parse_mode: str = "markdown_v2") -> List[str]:
+    def split_long_message(text: str, max_length: int = 4096, parse_mode: Union[ParseMode, str] = ParseMode.MARKDOWN_V2) -> List[str]:
         """
         Разбивает длинное сообщение на части
         
@@ -405,6 +455,9 @@ class TelegramFormatter:
         Returns:
             Список частей сообщения
         """
+        # Конвертируем ParseMode в строку для внутреннего использования
+        parse_mode_str = TelegramFormatter._parse_mode_to_string(parse_mode)
+        
         if len(text) <= max_length:
             return [text]
         
@@ -450,7 +503,7 @@ class TelegramFormatter:
         return parts
     
     @staticmethod
-    def format_analysis_result_with_reflection(analysis_result: dict, parse_mode: str = "markdown_v2") -> str:
+    def format_analysis_result_with_reflection(analysis_result: dict, parse_mode: Union[ParseMode, str] = ParseMode.MARKDOWN_V2) -> str:
         """
         Форматирует результат анализа с рефлексией в три раздела с цитатами
         
@@ -461,6 +514,9 @@ class TelegramFormatter:
         Returns:
             Отформатированный текст с тремя разделами
         """
+        # Конвертируем ParseMode в строку для внутреннего использования
+        parse_mode_str = TelegramFormatter._parse_mode_to_string(parse_mode)
+        
         if not isinstance(analysis_result, dict):
             # Если это не словарь, возвращаем как есть
             return str(analysis_result)
@@ -471,17 +527,17 @@ class TelegramFormatter:
         improved_summary = analysis_result.get('improved', '')
         
         # Формируем заголовки
-        if parse_mode == "markdown_v2":
+        if parse_mode_str == "markdown_v2":
             header1 = "*📝 Первый ответ модели:*"
             header2 = "*🤔 Результат рефлексии:*"
             header3 = "*✨ Финальная суммаризация:*"
             error_text = "*❌ Ошибка:*"
-        elif parse_mode == "markdown":
+        elif parse_mode_str == "markdown":
             header1 = "*📝 Первый ответ модели:*"
             header2 = "*🤔 Результат рефлексии:*"
             header3 = "*✨ Финальная суммаризация:*"
             error_text = "*❌ Ошибка:*"
-        elif parse_mode == "html":
+        elif parse_mode_str == "html":
             header1 = "<b>📝 Первый ответ модели:</b>"
             header2 = "<b>🤔 Результат рефлексии:</b>"
             header3 = "<b>✨ Финальная суммаризация:</b>"
@@ -497,7 +553,7 @@ class TelegramFormatter:
         # Раздел 1: Первый ответ модели
         result_parts.append(header1)
         if original_summary:
-            if parse_mode in ["markdown_v2", "markdown"]:
+            if parse_mode_str in ["markdown_v2", "markdown"]:
                 # Используем блок цитаты
                 quoted_text = TelegramFormatter._format_quote_block(original_summary, parse_mode)
             else:
@@ -511,7 +567,7 @@ class TelegramFormatter:
         # Раздел 2: Результат рефлексии
         result_parts.append(header2)
         if reflection:
-            if parse_mode in ["markdown_v2", "markdown"]:
+            if parse_mode_str in ["markdown_v2", "markdown"]:
                 quoted_text = TelegramFormatter._format_quote_block(reflection, parse_mode)
             else:
                 quoted_text = f"> {reflection}"
@@ -524,7 +580,7 @@ class TelegramFormatter:
         # Раздел 3: Финальная суммаризация
         result_parts.append(header3)
         if improved_summary:
-            if parse_mode in ["markdown_v2", "markdown"]:
+            if parse_mode_str in ["markdown_v2", "markdown"]:
                 quoted_text = TelegramFormatter._format_quote_block(improved_summary, parse_mode)
             else:
                 quoted_text = f"> {improved_summary}"
@@ -535,7 +591,7 @@ class TelegramFormatter:
         return "\n".join(result_parts)
     
     @staticmethod
-    def _format_quote_block(text: str, parse_mode: str = "markdown_v2") -> str:
+    def _format_quote_block(text: str, parse_mode: Union[ParseMode, str] = ParseMode.MARKDOWN_V2) -> str:
         """
         Форматирует текст как блок цитаты
         
@@ -546,10 +602,13 @@ class TelegramFormatter:
         Returns:
             Отформатированный блок цитаты
         """
+        # Конвертируем ParseMode в строку для внутреннего использования
+        parse_mode_str = TelegramFormatter._parse_mode_to_string(parse_mode)
+        
         if not text:
             return ""
         
-        if parse_mode == "markdown":
+        if parse_mode_str == "markdown":
             # Для обычного Markdown используем символ цитаты без экранирования
             lines = text.split('\n')
             quoted_lines = []

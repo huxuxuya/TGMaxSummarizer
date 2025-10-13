@@ -52,6 +52,10 @@ class GeminiProvider(BaseAIProvider):
             # Форматируем для анализа
             formatted_text = self.format_messages_for_analysis(optimized_messages)
             
+            # Логируем форматированные сообщения (ПОСЛЕ оптимизации)
+            if self.llm_logger:
+                self.llm_logger.log_formatted_messages(formatted_text, len(optimized_messages))
+            
             self.logger.info(f"📊 Статистика для Gemini:")
             self.logger.info(f"   Всего сообщений: {len(messages)}")
             self.logger.info(f"   После оптимизации: {len(optimized_messages)}")
@@ -230,8 +234,9 @@ class GeminiProvider(BaseAIProvider):
             Результат суммаризации или None при ошибке
         """
         try:
-            # Используем простой промпт как в рабочем скрипте
-            prompt = f"Кратко перескажи: {text[:2000]}"
+            # Используем централизованный промпт
+            from prompts import PromptTemplates
+            prompt = PromptTemplates.get_summarization_prompt(text[:2000], 'gemini')
 
             self.logger.info(f"🔗 Отправляем запрос в Gemini")
             self.logger.info(f"📝 Длина текста: {len(text)} символов")

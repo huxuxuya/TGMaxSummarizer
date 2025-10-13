@@ -327,37 +327,110 @@ class BotHandlers:
                 group_name = group['group_name']
                 break
         
+        # Показываем сообщение о выборе группы и начале обновления
+        await TelegramMessageSender.safe_edit_message_text(
+            update.callback_query,
+            f"✅ Выбрана группа: {group_name}\n\n"
+            f"🔄 Обновляем сообщения из всех чатов группы...",
+            reply_markup=None
+        )
+        
         # Проверяем, есть ли уже чаты в группе
         chats = self.db.get_group_vk_chats(group_id)
         
         if chats:
-            # Если чаты есть, проверяем количество
-            if len(chats) == 1:
-                # Если только один чат, автоматически переходим к нему
-                chat_id = chats[0]['chat_id']
-                chat_name = chats[0].get('chat_name', f'Чат {chat_id}')
-                
-                # Показываем сообщение о автоматическом выборе
+            # Автоматически обновляем сообщения для всех чатов в группе
+            total_new_messages = 0
+            updated_chats = 0
+            
+            try:
+                # Подключаемся к VK MAX
+                if await self.vk.connect():
+                    for chat in chats:
+                        chat_id = chat['chat_id']
+                        chat_name = chat.get('chat_name', f'Чат {chat_id}')
+                        
+                        try:
+                            # Обновляем сообщения для каждого чата
+                            new_messages = await self.vk.load_chat_messages(
+                                chat_id, 
+                                db_manager=self.db, 
+                                load_only_new=True
+                            )
+                            
+                            if new_messages:
+                                # Сохраняем новые сообщения
+                                await self.vk.save_messages_to_db(self.db, chat_id, new_messages)
+                                total_new_messages += len(new_messages)
+                                updated_chats += 1
+                                
+                                logger.info(f"📥 Загружено {len(new_messages)} новых сообщений из чата {chat_name}")
+                            
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка обновления чата {chat_name}: {e}")
+                    
+                    # Отключаемся от VK MAX
+                    await self.vk.disconnect()
+                    
+                    # Формируем сообщение о результатах обновления
+                    if total_new_messages > 0:
+                        update_message = (
+                            f"✅ Выбрана группа: {group_name}\n\n"
+                            f"📥 Загружено {total_new_messages} новых сообщений из {updated_chats} чатов\n\n"
+                        )
+                    else:
+                        update_message = (
+                            f"✅ Выбрана группа: {group_name}\n\n"
+                            f"📭 Новых сообщений нет\n\n"
+                        )
+                    
+                    # Проверяем количество чатов для дальнейших действий
+                    if len(chats) == 1:
+                        # Если только один чат, автоматически переходим к нему
+                        chat_id = chats[0]['chat_id']
+                        chat_name = chats[0].get('chat_name', f'Чат {chat_id}')
+                        
+                        update_message += f"🎯 Автоматически выбран единственный чат: {chat_name}"
+                        
+                        await TelegramMessageSender.safe_edit_message_text(
+                            update.callback_query,
+                            update_message,
+                            reply_markup=None
+                        )
+                        
+                        # Небольшая задержка для лучшего UX
+                        await asyncio.sleep(1)
+                        
+                        await self._handle_chat_selection(update, context, chat_id)
+                    else:
+                        # Если несколько чатов, показываем их список
+                        keyboard = chat_list_keyboard(chats)
+                        update_message += "📋 Список чатов VK MAX:"
+                        
+                        await TelegramMessageSender.safe_edit_message_text(
+                            update.callback_query,
+                            update_message,
+                            reply_markup=keyboard
+                        )
+                        
+                else:
+                    # Ошибка подключения к VK MAX
+                    await TelegramMessageSender.safe_edit_message_text(
+                        update.callback_query,
+                        f"✅ Выбрана группа: {group_name}\n\n"
+                        f"❌ Ошибка подключения к VK MAX\n"
+                        f"📋 Список чатов VK MAX:",
+                        reply_markup=chat_list_keyboard(chats)
+                    )
+                    
+            except Exception as e:
+                logger.error(f"❌ Ошибка при обновлении сообщений группы: {e}")
                 await TelegramMessageSender.safe_edit_message_text(
-                update.callback_query,
+                    update.callback_query,
                     f"✅ Выбрана группа: {group_name}\n\n"
-                    f"🎯 Автоматически выбран единственный чат: {chat_name}\n"
-                    f"⏳ Загружаем информацию...",
-                    reply_markup=None
-                )
-                
-                # Небольшая задержка для лучшего UX
-                await asyncio.sleep(1)
-                
-                await self._handle_chat_selection(update, context, chat_id)
-            else:
-                # Если несколько чатов, показываем их список
-                keyboard = chat_list_keyboard(chats)
-                await TelegramMessageSender.safe_edit_message_text(
-                update.callback_query,
-                    f"✅ Выбрана группа: {group_name}\n\n"
+                    f"⚠️ Ошибка обновления сообщений\n"
                     f"📋 Список чатов VK MAX:",
-                    reply_markup=keyboard
+                    reply_markup=chat_list_keyboard(chats)
                 )
         else:
             # Если чатов нет, показываем меню управления
@@ -2367,7 +2440,7 @@ class BotHandlers:
                 # Форматируем результат анализа
                 if isinstance(summary, dict):
                     # Используем новое форматирование с тремя разделами
-                    formatted_result = TelegramFormatter.format_analysis_result_with_reflection(summary, "markdown_v2")
+                    formatted_result = TelegramFormatter.format_analysis_result_with_reflection(summary, ParseMode.MARKDOWN_V2)
                     text += formatted_result
                 else:
                     # Старый формат - просто текст
@@ -2378,7 +2451,7 @@ class BotHandlers:
                     logger.warning(f"⚠️ Сообщение слишком длинное ({len(text)} символов), разбиваем на части")
                     
                     # Разбиваем на части
-                    message_parts = TelegramFormatter.split_long_message(text, 4000, "markdown")
+                    message_parts = TelegramFormatter.split_long_message(text, 4000, ParseMode.MARKDOWN_V2)
                     
                     # Отправляем первую часть с кнопками
                     await TelegramMessageSender.safe_edit_message_text(
@@ -2391,7 +2464,7 @@ class BotHandlers:
                     for i, part in enumerate(message_parts[1:], 1):
                         await query.message.reply_text(
                             part,
-                            parse_mode="markdown_v2"
+                            parse_mode=ParseMode.MARKDOWN_V2
                         )
                     
                     return
@@ -2445,12 +2518,13 @@ class BotHandlers:
             else:
                 back_callback = "back_to_chat_settings"
             
-            # Безопасно экранируем текст ошибки для MarkdownV2
-            safe_error_text = TelegramFormatter.escape_markdown_v2(str(e))
+            # Импортируем TextContentType для указания типа контента
+            from telegram_formatter import TextContentType
             
             await TelegramMessageSender.safe_edit_message_text(
                 query,
-                f"❌ Ошибка анализа: {safe_error_text}",
+                f"❌ Ошибка анализа: {str(e)}",
+                content_type=TextContentType.RAW,  # Экранирование произойдет автоматически
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Назад", callback_data=back_callback)
                 ]])

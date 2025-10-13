@@ -5,7 +5,8 @@ import logging
 from typing import Optional, Union, List
 from telegram import Update, InlineKeyboardMarkup, CallbackQuery
 from telegram.constants import ParseMode
-from telegram_formatter import TelegramFormatter
+from telegram.helpers import escape_markdown
+from telegram_formatter import TelegramFormatter, TextContentType
 # from utils import escape_markdown_v2 as escape_md_preserve_formatting  # Не используется
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ class TelegramMessageSender:
     async def safe_edit_message_text(
         query: CallbackQuery,
         text: str,
+        content_type: TextContentType = TextContentType.FORMATTED,
         reply_markup: Optional[InlineKeyboardMarkup] = None,
         parse_mode: ParseMode = ParseMode.MARKDOWN_V2
     ) -> bool:
@@ -29,6 +31,8 @@ class TelegramMessageSender:
         Args:
             query: CallbackQuery объект
             text: Текст сообщения
+            content_type: Тип контента (RAW, FORMATTED, TECHNICAL). По умолчанию FORMATTED
+                для обратной совместимости с существующим кодом
             reply_markup: Клавиатура (опционально)
             parse_mode: Режим парсинга (по умолчанию MARKDOWN_V2)
         
@@ -37,10 +41,26 @@ class TelegramMessageSender:
         """
         logger.debug("=== SAFE_EDIT_MESSAGE_TEXT START ===")
         logger.debug(f"Original text:\n{text}")
+        logger.debug(f"Content type: {content_type}")
         
-        # Используем умное экранирование для MarkdownV2
-        from telegram_formatter import TelegramFormatter
-        markdown_text = TelegramFormatter.smart_escape_markdown_v2(text)
+        # Выбираем метод экранирования в зависимости от типа контента
+        if content_type == TextContentType.RAW:
+            # Сырой текст - используем встроенный хелпер telegram
+            markdown_text = escape_markdown(text, version=2)
+            logger.debug("Using telegram.helpers.escape_markdown() for RAW content")
+        elif content_type == TextContentType.FORMATTED:
+            # Форматированный текст - используем наш умный эскейпер
+            markdown_text = TelegramFormatter.smart_escape_markdown_v2(text)
+            logger.debug("Using TelegramFormatter.smart_escape_markdown_v2() for FORMATTED content")
+        elif content_type == TextContentType.TECHNICAL:
+            # Технический текст - оборачиваем в код
+            markdown_text = f"`{text}`"
+            logger.debug("Wrapping in backticks for TECHNICAL content")
+        else:
+            # Fallback на FORMATTED
+            markdown_text = TelegramFormatter.smart_escape_markdown_v2(text)
+            logger.warning(f"Unknown content type {content_type}, using FORMATTED as fallback")
+        
         logger.debug(f"Text for MarkdownV2:\n{markdown_text}")
         
         try:
@@ -182,6 +202,7 @@ class TelegramMessageSender:
         bot,
         chat_id: Union[int, str],
         text: str,
+        content_type: TextContentType = TextContentType.FORMATTED,
         reply_markup: Optional[InlineKeyboardMarkup] = None,
         parse_mode: ParseMode = ParseMode.MARKDOWN_V2,
         disable_notification: bool = False,
@@ -194,6 +215,7 @@ class TelegramMessageSender:
             bot: Bot объект
             chat_id: ID чата
             text: Текст сообщения
+            content_type: Тип контента (RAW, FORMATTED, TECHNICAL). По умолчанию FORMATTED
             reply_markup: Клавиатура (опционально)
             parse_mode: Режим парсинга (по умолчанию MARKDOWN_V2)
             disable_notification: Отключить уведомления
@@ -204,11 +226,24 @@ class TelegramMessageSender:
         """
         logger.debug("=== SAFE_SEND_MESSAGE START ===")
         logger.debug(f"Original text:\n{text}")
+        logger.debug(f"Content type: {content_type}")
         
         try:
             if parse_mode == ParseMode.MARKDOWN_V2:
-                # Используем умное экранирование для MarkdownV2
-                formatted_text = TelegramFormatter.smart_escape_markdown_v2(text)
+                # Выбираем метод экранирования в зависимости от типа контента
+                if content_type == TextContentType.RAW:
+                    formatted_text = escape_markdown(text, version=2)
+                    logger.debug("Using telegram.helpers.escape_markdown() for RAW content")
+                elif content_type == TextContentType.FORMATTED:
+                    formatted_text = TelegramFormatter.smart_escape_markdown_v2(text)
+                    logger.debug("Using TelegramFormatter.smart_escape_markdown_v2() for FORMATTED content")
+                elif content_type == TextContentType.TECHNICAL:
+                    formatted_text = f"`{text}`"
+                    logger.debug("Wrapping in backticks for TECHNICAL content")
+                else:
+                    formatted_text = TelegramFormatter.smart_escape_markdown_v2(text)
+                    logger.warning(f"Unknown content type {content_type}, using FORMATTED as fallback")
+                
                 logger.debug(f"Text for MarkdownV2:\n{formatted_text}")
                 
                 await bot.send_message(

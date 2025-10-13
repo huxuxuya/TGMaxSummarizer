@@ -10,6 +10,7 @@ from ai_providers import ProviderFactory
 from config import AI_PROVIDERS, DEFAULT_AI_PROVIDER, FALLBACK_PROVIDERS, ENABLE_REFLECTION, AUTO_IMPROVE_SUMMARY, ENABLE_LLM_LOGGING, LLM_LOGS_DIR
 from telegram_formatter import TelegramFormatter
 from llm_logger import LLMLogger
+from prompts import PromptTemplates
 
 logger = logging.getLogger(__name__)
 
@@ -327,7 +328,6 @@ class ChatAnalyzer:
                     
                 # Убираем лишние символы и сокращаем
                 text = re.sub(r'\s+', ' ', text)
-                text = re.sub(r'[^\w\s\.,!?\-:;()]', '', text)
                 
                 if len(text) > 200:
                     text = text[:200] + "..."
@@ -406,7 +406,24 @@ class ChatAnalyzer:
             # Создаем LLM логгер если включено логирование
             llm_logger = None
             if ENABLE_LLM_LOGGING:
-                llm_logger = LLMLogger(LLM_LOGS_DIR)
+                # Определяем дату из сообщений
+                date = None
+                if messages and len(messages) > 0:
+                    # Пытаемся извлечь дату из первого сообщения
+                    first_msg = messages[0]
+                    if 'date' in first_msg:
+                        date = first_msg['date']
+                    elif 'message_time' in first_msg:
+                        # Конвертируем timestamp в дату
+                        from datetime import datetime
+                        try:
+                            dt = datetime.fromtimestamp(first_msg['message_time'] / 1000)
+                            date = dt.strftime('%Y-%m-%d')
+                        except (ValueError, OSError):
+                            pass
+                
+                llm_logger = LLMLogger(LLM_LOGS_DIR, date=date)
+                llm_logger.clear_date_logs()  # Очищаем старые логи для этой даты
                 llm_logger.set_session_info(provider_name, model_id, None, user_id)
                 logger.info(f"📁 LLM Logger создан: {llm_logger.get_logs_path()}")
             
@@ -430,21 +447,7 @@ class ChatAnalyzer:
                 provider.set_model(model_id)
                 logger.info(f"🔗 Установлена модель OpenRouter: {model_id}")
             
-            # Оптимизируем сообщения
-            optimized_messages = self.optimize_text(messages)
-            if not optimized_messages:
-                logger.warning("⚠️ Нет сообщений для анализа после оптимизации")
-                return None
-            
-            # Форматируем для анализа
-            formatted_text = self.format_chat_for_analysis(optimized_messages)
-            if not formatted_text:
-                logger.warning("⚠️ Не удалось отформатировать текст для анализа")
-                return None
-            
-            # Логируем форматированные сообщения
-            if llm_logger:
-                llm_logger.log_formatted_messages(formatted_text, len(optimized_messages))
+            # Оптимизация и логирование теперь происходит в провайдерах
             
             # Создаем контекст чата
             chat_context = {
@@ -455,7 +458,7 @@ class ChatAnalyzer:
             }
             
             # Выполняем суммаризацию
-            summary = await provider.summarize_chat(optimized_messages, chat_context)
+            summary = await provider.summarize_chat(messages, chat_context)
             
             # Проверяем успешность суммаризации - если не получилось, прерываем
             if not summary:
@@ -488,10 +491,10 @@ class ChatAnalyzer:
                     logger.debug("=== REFLECTION ENABLED ===")
                     logger.debug(f"Provider: {provider}")
                     logger.debug(f"Summary: {summary[:100]}...")
-                    logger.debug(f"Optimized messages count: {len(optimized_messages)}")
+                    logger.debug(f"Messages count: {len(messages)}")
                     logger.debug(f"Chat context: {chat_context}")
                     
-                    reflection = await self.perform_reflection(provider, summary, optimized_messages, chat_context, llm_logger)
+                    reflection = await self.perform_reflection(provider, summary, messages, chat_context, llm_logger)
                     logger.debug(f"Reflection result: {reflection}")
                     
                     # Проверяем успешность рефлексии
@@ -526,7 +529,7 @@ class ChatAnalyzer:
                         # Автоматически улучшаем суммаризацию, если включено
                         if AUTO_IMPROVE_SUMMARY:
                             improved_summary = await self.improve_summary_with_reflection(
-                                provider, summary, reflection, optimized_messages, chat_context, llm_logger
+                                provider, summary, reflection, messages, chat_context, llm_logger
                             )
                             if improved_summary:
                                 logger.info("✨ Суммаризация автоматически улучшена")
@@ -660,41 +663,7 @@ class ChatAnalyzer:
         total_messages = len(messages)
         date = chat_context.get('date', 'неизвестная дата')
         
-        # Создаем краткую выборку сообщений для контекста
-        sample_messages = messages[:5] if len(messages) > 5 else messages
-        sample_text = "\n".join([
-            f"- {msg.get('sender_name', 'Неизвестный')}: {msg.get('text', '')[:100]}..."
-            for msg in sample_messages
-        ])
-        
-        prompt = f"""РОЛЬ: Эксперт по анализу текста для родительских чатов.
-
-ЗАДАЧА: Проанализируй суммаризацию и дай конкретные советы по улучшению.
-
-ВАЖНО: НЕ переписывай суммаризацию! Только анализируй и давай советы.
-
-КОНТЕКСТ:
-- Дата: {date}
-- Сообщений: {total_messages}
-
-СУММАРИЗАЦИЯ ДЛЯ АНАЛИЗА:
-{summary}
-
-ДАЙ КРАТКИЙ АНАЛИЗ:
-- Что упущено или неясно?
-- Какие действия нужно сделать более конкретными?
-- Есть ли лишняя информация?
-- Что можно улучшить в структуре?
-
-ПРИМЕРЫ ХОРОШИХ СОВЕТОВ:
-- "Добавить точное время мероприятия"
-- "Указать конкретный срок выполнения"
-- "Убрать лишние детали о координации"
-- "Сделать действия более четкими"
-
-ДАЙ ТОЛЬКО КОНКРЕТНЫЕ СОВЕТЫ ПО УЛУЧШЕНИЮ:"""
-
-        return prompt
+        return PromptTemplates.get_reflection_prompt(summary, date, total_messages)
     
     async def improve_summary_with_reflection(self, provider, original_summary: str, reflection: str, messages: List[Dict], chat_context: Dict, llm_logger=None) -> Optional[str]:
         """
@@ -743,32 +712,4 @@ class ChatAnalyzer:
         Returns:
             Промпт для улучшения
         """
-        total_messages = len(messages)
-        date = chat_context.get('date', 'неизвестная дата')
-        
-        # Создаем краткую выборку сообщений для контекста
-        sample_messages = messages[:10] if len(messages) > 10 else messages
-        sample_text = "\n".join([
-            f"- {msg.get('sender_name', 'Неизвестный')}: {msg.get('text', '')[:150]}..."
-            for msg in sample_messages
-        ])
-        
-        prompt = f"""Ты - классный руководитель 1 класса. Создай улучшенную версию суммаризации для родителей.
-
-ИСХОДНАЯ СУММАРИЗАЦИЯ:
-{original_summary}
-
-ПРЕДЛОЖЕНИЯ ПО УЛУЧШЕНИЮ:
-{reflection}
-
-ВАЖНО: 
-- Создай ТОЛЬКО улучшенную суммаризацию
-- НЕ включай разделы "Улучшения", "Недостатки", "Изменения" и т.п.
-- НЕ анализируй, что было изменено
-- НЕ используй HTML теги и Markdown таблицы
-- Используй **жирный текст** и ## для заголовков
-- Следуй формату исходной суммаризации
-
-ВЫВЕДИ ТОЛЬКО УЛУЧШЕННУЮ СУММАРИЗАЦИЮ:"""
-
-        return prompt
+        return PromptTemplates.get_improvement_prompt(original_summary, reflection)
