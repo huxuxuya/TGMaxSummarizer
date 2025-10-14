@@ -190,7 +190,10 @@ def format_summary_markdown_v2(summary: str) -> str:
                 converted_line = original_line.replace('**', '*')
                 formatted_lines.append(converted_line)
     
-    return '\n'.join(formatted_lines)
+    # Экранируем специальные символы для MarkdownV2
+    from telegram_formatter import TelegramFormatter
+    result = '\n'.join(formatted_lines)
+    return TelegramFormatter.escape_markdown_v2(result)
 
 def validate_chat_id(chat_id: str) -> bool:
     """Проверить валидность ID чата"""

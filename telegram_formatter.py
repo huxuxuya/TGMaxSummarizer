@@ -799,19 +799,6 @@ class TelegramFormatter:
                 # Убираем лишние переносы строк
                 html = re.sub(r'\n{3,}', '\n\n', html)
                 html = html.strip()
-                
-                # Экранируем HTML символы для безопасного использования в Telegram
-                html = TelegramFormatter.escape_html(html)
-                
-                # Восстанавливаем теги форматирования, которые поддерживает Telegram
-                allowed_tags = ['b', 'i', 'u', 's', 'a', 'code', 'pre']
-                for tag in allowed_tags:
-                    html = html.replace(f'&lt;{tag}&gt;', f'<{tag}>')
-                    html = html.replace(f'&lt;/{tag}&gt;', f'</{tag}>')
-                
-                # Восстанавливаем атрибуты для ссылок
-                html = html.replace('&lt;a href=', '<a href=')
-                html = html.replace('&gt;', '>')
             
             return html
             

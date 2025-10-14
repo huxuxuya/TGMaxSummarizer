@@ -136,6 +136,18 @@ class BotHandlers:
             chat_id = data.split("_")[3]
             date = data.split("_")[4]
             await self._handle_generate_new_summary(update, context, chat_id, date)
+        elif data.startswith("summarize_with_reflection_"):
+            chat_id = data.split("_")[3]
+            date = data.split("_")[4]
+            await self._handle_summarize_with_reflection(update, context, chat_id, date)
+        elif data.startswith("summarize_without_reflection_"):
+            chat_id = data.split("_")[3]
+            date = data.split("_")[4]
+            await self._handle_summarize_without_reflection(update, context, chat_id, date)
+        elif data.startswith("summarize_with_cleaning_"):
+            chat_id = data.split("_")[3]
+            date = data.split("_")[4]
+            await self._handle_summarize_with_cleaning(update, context, chat_id, date)
         elif data.startswith("improve_summary_"):
             chat_id = data.split("_")[2]
             date = data.split("_")[3]
@@ -263,6 +275,8 @@ class BotHandlers:
             await self.analyze_with_openrouter_model_handler(update, context)
         elif data.startswith("analyze_with_openrouter_model_index:"):
             await self.analyze_with_openrouter_model_index_handler(update, context)
+        elif data.startswith("analyze_with_ollama_model_index:"):
+            await self.analyze_with_ollama_model_index_handler(update, context)
     
     async def _handle_manage_chats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка управления чатами"""
@@ -964,7 +978,8 @@ class BotHandlers:
                                         chat_id=group_id,
                                         text=part,
                                         parse_mode=ParseMode.MARKDOWN_V2,
-                                        disable_notification=True
+                                        disable_notification=True,
+                                        disable_web_page_preview=True
                                     )
                                     if success:
                                         message = {"message_id": f"msg_{i+1}"}  # Приблизительный ID
@@ -978,7 +993,8 @@ class BotHandlers:
                                             chat_id=group_id,
                                             text=part,
                                             parse_mode=None,
-                                            disable_notification=True
+                                            disable_notification=True,
+                                            disable_web_page_preview=True
                                         )
                                         if success:
                                             message = {"message_id": f"msg_{i+1}"}
@@ -1003,7 +1019,8 @@ class BotHandlers:
                                 chat_id=group_id,
                                 text=part,
                                 parse_mode=ParseMode.MARKDOWN_V2,
-                                disable_notification=True
+                                disable_notification=True,
+                                disable_web_page_preview=True
                             )
                             if success:
                                 message = {"message_id": f"msg_{i+1}"}
@@ -1015,7 +1032,8 @@ class BotHandlers:
                                     chat_id=group_id,
                                     text=part,
                                     parse_mode=None,
-                                    disable_notification=True
+                                    disable_notification=True,
+                                    disable_web_page_preview=True
                                 )
                                 if success:
                                     message = {"message_id": f"msg_{i+1}"}
@@ -1039,7 +1057,8 @@ class BotHandlers:
                                 chat_id=group_id,
                                 text=part,
                                 parse_mode=ParseMode.MARKDOWN_V2,
-                                disable_notification=True
+                                disable_notification=True,
+                                disable_web_page_preview=True
                             )
                             if success:
                                 message = {"message_id": f"msg_{i+1}"}
@@ -1203,7 +1222,8 @@ class BotHandlers:
                             chat_id=group_id,
                             text=part,
                             parse_mode=ParseMode.HTML,
-                            disable_notification=True
+                            disable_notification=True,
+                            disable_web_page_preview=True
                         )
                         sent_message_ids.append(message.message_id)
                         logger.info(f"✅ Отправлено HTML сообщение {i+1} (ID: {message.message_id})")
@@ -1215,7 +1235,8 @@ class BotHandlers:
                             message = await context.bot.send_message(
                                 chat_id=group_id,
                                 text=part,
-                                disable_notification=True
+                                disable_notification=True,
+                                disable_web_page_preview=True
                             )
                             sent_message_ids.append(message.message_id)
                             logger.info(f"✅ Отправлено HTML сообщение {i+1} (ID: {message.message_id}) в plain text")
@@ -1415,6 +1436,50 @@ class BotHandlers:
         context.user_data['selected_date'] = date
         context.user_data['selected_chat_id'] = chat_id
         
+        # Показываем меню выбора режима суммаризации
+        keyboard = [
+            [InlineKeyboardButton("🔄 Стандартная (с рефлексией)", callback_data=f"summarize_with_reflection_{chat_id}_{date}")],
+            [InlineKeyboardButton("⚡ Быстрая (без рефлексии)", callback_data=f"summarize_without_reflection_{chat_id}_{date}")],
+            [InlineKeyboardButton("🧹 С предварительной очисткой данных", callback_data=f"summarize_with_cleaning_{chat_id}_{date}")],
+            [InlineKeyboardButton("🔙 Назад", callback_data=f"select_chat_{chat_id}")]
+        ]
+        
+        await TelegramMessageSender.safe_edit_message_text(
+            update.callback_query,
+            f"📊 Выберите режим суммаризации для {date}\n\n"
+            f"🔄 **Стандартная** - полный анализ с рефлексией и улучшением\n"
+            f"⚡ **Быстрая** - только суммаризация без рефлексии\n"
+            f"🧹 **С очисткой** - предварительная фильтрация сообщений + суммаризация",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    async def _handle_summarize_with_reflection(self, update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: str, date: str):
+        """Обработка суммаризации с рефлексией"""
+        # Устанавливаем режим в контексте
+        context.user_data['summarization_mode'] = 'with_reflection'
+        context.user_data['enable_reflection_override'] = True
+        context.user_data['clean_data_first'] = False
+        
+        # Показываем выбор модели для анализа
+        await self.select_model_for_analysis_handler(update, context)
+    
+    async def _handle_summarize_without_reflection(self, update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: str, date: str):
+        """Обработка суммаризации без рефлексии"""
+        # Устанавливаем режим в контексте
+        context.user_data['summarization_mode'] = 'without_reflection'
+        context.user_data['enable_reflection_override'] = False
+        context.user_data['clean_data_first'] = False
+        
+        # Показываем выбор модели для анализа
+        await self.select_model_for_analysis_handler(update, context)
+    
+    async def _handle_summarize_with_cleaning(self, update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: str, date: str):
+        """Обработка суммаризации с предварительной очисткой данных"""
+        # Устанавливаем режим в контексте
+        context.user_data['summarization_mode'] = 'with_cleaning'
+        context.user_data['enable_reflection_override'] = None  # Используем глобальную настройку
+        context.user_data['clean_data_first'] = True
+        
         # Показываем выбор модели для анализа
         await self.select_model_for_analysis_handler(update, context)
     
@@ -1500,6 +1565,10 @@ class BotHandlers:
                     ]])
                 )
                 return
+            
+            # Устанавливаем модель для Ollama, если выбрана
+            if selected_provider == 'ollama' and selected_model:
+                provider.set_model(selected_model)
             
             # Создаем контекст чата
             chat_context = {
@@ -2172,11 +2241,11 @@ class BotHandlers:
             if availability_stats and not availability_stats.get('is_available', True):
                 display_name = provider_info.get('display_name', provider_name.title())
                 # Экранируем все тексты для безопасного использования в MarkdownV2
-                safe_display_name = TelegramMessageSender.format_text_for_markdown_v2(display_name)
-                safe_description = TelegramMessageSender.format_text_for_markdown_v2(
+                safe_display_name = TelegramFormatter.escape_markdown_v2(display_name)
+                safe_description = TelegramFormatter.escape_markdown_v2(
                     provider_info.get('description', 'Нет описания')
                 )
-                safe_last_check = TelegramMessageSender.format_text_for_markdown_v2(
+                safe_last_check = TelegramFormatter.escape_markdown_v2(
                     availability_stats.get('last_check', 'Неизвестно')
                 )
                 
@@ -2201,6 +2270,11 @@ class BotHandlers:
                 await self.analyze_with_openrouter_model_selection_handler(update, context)
                 return
             
+            # Если выбран Ollama, показываем выбор моделей
+            if provider_name == 'ollama':
+                await self.analyze_with_ollama_model_selection_handler(update, context)
+                return
+            
             # Для других провайдеров сразу запускаем анализ
             context.user_data['selected_analysis_provider'] = provider_name
             context.user_data['selected_analysis_model'] = None  # Нет модели для других провайдеров
@@ -2210,6 +2284,53 @@ class BotHandlers:
             
         except Exception as e:
             logger.error(f"Ошибка анализа с провайдером: {e}")
+            # Определяем правильную кнопку "Назад" в зависимости от контекста
+            date = context.user_data.get('selected_date')
+            if date:
+                chat_id = context.user_data.get('selected_chat_id')
+                back_callback = f"select_chat_{chat_id}"
+            else:
+                back_callback = "select_model_for_analysis"
+            
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                f"❌ Ошибка: {str(e)}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Назад", callback_data=back_callback)
+                ]])
+            )
+    
+    async def analyze_with_ollama_model_index_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик анализа с выбранной моделью Ollama по индексу"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            index = int(query.data.split(":")[1])
+            
+            # Получаем полный model_id из сохраненного списка
+            models_list = context.user_data.get('ollama_models_list', [])
+            if index >= len(models_list):
+                await TelegramMessageSender.safe_edit_message_text(
+                    query,
+                    "❌ Неверный индекс модели",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 Назад", callback_data="select_model_for_analysis")
+                    ]])
+                )
+                return
+            
+            model_id, model_info = models_list[index]
+            
+            # Сохраняем выбранную модель для анализа
+            context.user_data['selected_analysis_provider'] = 'ollama'
+            context.user_data['selected_analysis_model'] = model_id
+            
+            # Запускаем анализ с выбранной датой
+            await self._run_analysis_with_selected_model(update, context)
+            
+        except Exception as e:
+            logger.error(f"Ошибка анализа с моделью Ollama по индексу: {e}")
             # Определяем правильную кнопку "Назад" в зависимости от контекста
             date = context.user_data.get('selected_date')
             if date:
@@ -2293,6 +2414,86 @@ class BotHandlers:
                 ]])
             )
     
+    async def analyze_with_ollama_model_selection_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик выбора модели Ollama для анализа"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Получаем Ollama провайдер
+            ollama_provider = self.analyzer.provider_factory.create_provider('ollama', self.analyzer.config)
+            if not ollama_provider:
+                await TelegramMessageSender.safe_edit_message_text(
+                query,
+                    "❌ Ollama провайдер недоступен",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 Назад", callback_data="select_model_for_analysis")
+                    ]])
+                )
+                return
+            
+            # Получаем доступные модели
+            available_models = await ollama_provider.get_available_models()
+            
+            if not available_models:
+                await TelegramMessageSender.safe_edit_message_text(
+                query,
+                    "❌ Не удалось получить список моделей Ollama\n\n"
+                    "Убедитесь, что Ollama запущен и доступен.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 Назад", callback_data="select_model_for_analysis")
+                    ]])
+                )
+                return
+            
+            keyboard = []
+            # Преобразуем словарь в список для индексации
+            models_list = list(available_models.items())
+            for index, (model_id, model_info) in enumerate(models_list):
+                display_name = model_info.get('display_name', model_id)
+                size_mb = model_info.get('size', 0) / (1024 * 1024) if model_info.get('size') else 0
+                size_text = f" ({size_mb:.0f}MB)" if size_mb > 0 else ""
+                keyboard.append([InlineKeyboardButton(
+                    f"🆓 {display_name}{size_text}",
+                    callback_data=f"analyze_with_ollama_model_index:{index}"
+                )])
+            
+            # Сохраняем полные model_id в контексте пользователя
+            context.user_data['ollama_models_list'] = models_list
+            
+            # Определяем правильную кнопку "Назад" в зависимости от контекста
+            date = context.user_data.get('selected_date')
+            if date:
+                chat_id = context.user_data.get('selected_chat_id')
+                keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=f"select_chat_{chat_id}")])
+            else:
+                keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="select_model_for_analysis")])
+            
+            text = "🔗 Выберите модель Ollama для анализа:\n\n"
+            text += "Эта модель будет использована только для текущего анализа.\n"
+            text += "Ваши глобальные настройки не изменятся.\n\n"
+            
+            for model_id, model_info in available_models.items():
+                size_mb = model_info.get('size', 0) / (1024 * 1024) if model_info.get('size') else 0
+                size_text = f" ({size_mb:.0f}MB)" if size_mb > 0 else ""
+                text += f"• **{model_info['display_name']}**{size_text}\n"
+            
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка выбора модели Ollama для анализа: {e}")
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                f"❌ Ошибка: {str(e)}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Назад", callback_data="select_model_for_analysis")
+                ]])
+            )
+    
     async def analyze_with_openrouter_model_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик анализа с выбранной моделью OpenRouter (старый формат)"""
         query = update.callback_query
@@ -2310,6 +2511,53 @@ class BotHandlers:
             
         except Exception as e:
             logger.error(f"Ошибка анализа с моделью OpenRouter: {e}")
+            # Определяем правильную кнопку "Назад" в зависимости от контекста
+            date = context.user_data.get('selected_date')
+            if date:
+                chat_id = context.user_data.get('selected_chat_id')
+                back_callback = f"select_chat_{chat_id}"
+            else:
+                back_callback = "select_model_for_analysis"
+            
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                f"❌ Ошибка: {str(e)}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Назад", callback_data=back_callback)
+                ]])
+            )
+    
+    async def analyze_with_ollama_model_index_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик анализа с выбранной моделью Ollama по индексу"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            index = int(query.data.split(":")[1])
+            
+            # Получаем полный model_id из сохраненного списка
+            models_list = context.user_data.get('ollama_models_list', [])
+            if index >= len(models_list):
+                await TelegramMessageSender.safe_edit_message_text(
+                    query,
+                    "❌ Неверный индекс модели",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 Назад", callback_data="select_model_for_analysis")
+                    ]])
+                )
+                return
+            
+            model_id, model_info = models_list[index]
+            
+            # Сохраняем выбранную модель для анализа
+            context.user_data['selected_analysis_provider'] = 'ollama'
+            context.user_data['selected_analysis_model'] = model_id
+            
+            # Запускаем анализ с выбранной датой
+            await self._run_analysis_with_selected_model(update, context)
+            
+        except Exception as e:
+            logger.error(f"Ошибка анализа с моделью Ollama по индексу: {e}")
             # Определяем правильную кнопку "Назад" в зависимости от контекста
             date = context.user_data.get('selected_date')
             if date:
@@ -2390,15 +2638,24 @@ class BotHandlers:
                 )
                 return
             
+            # Получаем параметры режима из контекста
+            enable_reflection = context.user_data.get('enable_reflection_override')
+            clean_data_first = context.user_data.get('clean_data_first', False)
+            summarization_mode = context.user_data.get('summarization_mode', 'with_reflection')
+            
             # Анализируем сообщения с выбранной моделью
             summary = await self.analyzer.analyze_chat_with_specific_model(
-                messages, selected_provider, selected_model, update.effective_user.id
+                messages, selected_provider, selected_model, update.effective_user.id,
+                enable_reflection=enable_reflection, clean_data_first=clean_data_first
             )
             
             # Очищаем временные настройки
             context.user_data.pop('selected_analysis_provider', None)
             context.user_data.pop('selected_analysis_model', None)
             context.user_data.pop('selected_date', None)
+            context.user_data.pop('summarization_mode', None)
+            context.user_data.pop('enable_reflection_override', None)
+            context.user_data.pop('clean_data_first', None)
             
             if summary:
                 # Сохраняем суммаризацию в БД
@@ -2429,6 +2686,15 @@ class BotHandlers:
                 if selected_model:
                     stats_lines.append(f"> • Модель: {selected_model}")
                 
+                # Добавляем информацию о режиме
+                mode_names = {
+                    'with_reflection': 'Стандартная (с рефлексией)',
+                    'without_reflection': 'Быстрая (без рефлексии)',
+                    'with_cleaning': 'С очисткой данных'
+                }
+                mode_name = mode_names.get(summarization_mode, 'Неизвестный режим')
+                stats_lines.append(f"> • Режим: {mode_name}")
+                
                 text += "\n".join(stats_lines) + "\n\n"
                 
                 # Создаем клавиатуру заранее
@@ -2446,12 +2712,34 @@ class BotHandlers:
                     # Старый формат - просто текст
                     text += f"📝 *Резюме:*\n{display_text}"
                 
+                # Логируем финальный отформатированный текст для Telegram
+                try:
+                    from llm_logger import LLMLogger
+                    from config import ENABLE_LLM_LOGGING, LLM_LOGS_DIR
+                    if ENABLE_LLM_LOGGING:
+                        # Создаем временный логгер для логирования финального текста
+                        temp_logger = LLMLogger(LLM_LOGS_DIR, date=date, scenario="telegram_formatted")
+                        temp_logger.log_telegram_formatted(text)
+                except Exception as e:
+                    logger.debug(f"Не удалось залогировать финальный текст: {e}")
+                
                 # Проверяем длину сообщения и разбиваем на части если нужно
                 if len(text) > 4000:  # Оставляем запас для кнопок
                     logger.warning(f"⚠️ Сообщение слишком длинное ({len(text)} символов), разбиваем на части")
                     
                     # Разбиваем на части
                     message_parts = TelegramFormatter.split_long_message(text, 4000, ParseMode.MARKDOWN_V2)
+                    
+                    # Логируем все части разбитого сообщения
+                    try:
+                        from llm_logger import LLMLogger
+                        from config import ENABLE_LLM_LOGGING, LLM_LOGS_DIR
+                        if ENABLE_LLM_LOGGING:
+                            temp_logger = LLMLogger(LLM_LOGS_DIR, date=date, scenario="telegram_formatted")
+                            for i, part in enumerate(message_parts):
+                                temp_logger.log_telegram_formatted(f"=== ЧАСТЬ {i+1} ===\n{part}")
+                    except Exception as e:
+                        logger.debug(f"Не удалось залогировать части сообщения: {e}")
                     
                     # Отправляем первую часть с кнопками
                     await TelegramMessageSender.safe_edit_message_text(
@@ -2767,6 +3055,53 @@ class BotHandlers:
             
         except Exception as e:
             logger.error(f"Ошибка анализа с моделью OpenRouter по индексу: {e}")
+            # Определяем правильную кнопку "Назад" в зависимости от контекста
+            date = context.user_data.get('selected_date')
+            if date:
+                chat_id = context.user_data.get('selected_chat_id')
+                back_callback = f"select_chat_{chat_id}"
+            else:
+                back_callback = "select_model_for_analysis"
+            
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                f"❌ Ошибка: {str(e)}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Назад", callback_data=back_callback)
+                ]])
+            )
+    
+    async def analyze_with_ollama_model_index_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик анализа с выбранной моделью Ollama по индексу"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            index = int(query.data.split(":")[1])
+            
+            # Получаем полный model_id из сохраненного списка
+            models_list = context.user_data.get('ollama_models_list', [])
+            if index >= len(models_list):
+                await TelegramMessageSender.safe_edit_message_text(
+                    query,
+                    "❌ Неверный индекс модели",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 Назад", callback_data="select_model_for_analysis")
+                    ]])
+                )
+                return
+            
+            model_id, model_info = models_list[index]
+            
+            # Сохраняем выбранную модель для анализа
+            context.user_data['selected_analysis_provider'] = 'ollama'
+            context.user_data['selected_analysis_model'] = model_id
+            
+            # Запускаем анализ с выбранной датой
+            await self._run_analysis_with_selected_model(update, context)
+            
+        except Exception as e:
+            logger.error(f"Ошибка анализа с моделью Ollama по индексу: {e}")
             # Определяем правильную кнопку "Назад" в зависимости от контекста
             date = context.user_data.get('selected_date')
             if date:

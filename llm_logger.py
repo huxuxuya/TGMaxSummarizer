@@ -12,13 +12,17 @@ logger = logging.getLogger(__name__)
 class LLMLogger:
     """Класс для логирования всех этапов работы с LLM в текстовые файлы"""
     
-    def __init__(self, logs_dir: str = "llm_logs", date: Optional[str] = None):
+    def __init__(self, logs_dir: str = "llm_logs", date: Optional[str] = None, scenario: Optional[str] = None, 
+                 test_mode: bool = False, model_name: Optional[str] = None):
         """
         Инициализация логгера
         
         Args:
             logs_dir: Папка для логов (по умолчанию "llm_logs")
             date: Дата в формате YYYY-MM-DD (по умолчанию текущая дата)
+            scenario: Сценарий (with_reflection, without_reflection, with_cleaning)
+            test_mode: Если True, использует структуру test_comparison/{model_name}/{scenario}/
+            model_name: Имя модели для тестового режима
         """
         self.logs_dir = Path(logs_dir)
         
@@ -28,9 +32,27 @@ class LLMLogger:
         else:
             self.date = datetime.now().strftime("%Y-%m-%d")
         
-        # Создаем папку для текущей даты
-        self.date_dir = self.logs_dir / self.date
-        self.date_dir.mkdir(parents=True, exist_ok=True)
+        # Создаем подпапку для сценария
+        if test_mode and model_name and scenario:
+            # Тестовый режим: test_comparison/{model_name}/{scenario}/
+            self.scenario_dir = self.logs_dir / "test_comparison" / model_name / scenario
+            # Очищаем папку если существует
+            if self.scenario_dir.exists():
+                import shutil
+                shutil.rmtree(self.scenario_dir)
+            self.scenario_dir.mkdir(parents=True, exist_ok=True)
+        elif scenario:
+            # Обычный режим с временной меткой
+            timestamp = datetime.now().strftime("%H-%M-%S")
+            self.scenario_dir = self.logs_dir / self.date / f"{scenario}_{timestamp}"
+            self.scenario_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            # Обычный режим без сценария
+            self.scenario_dir = self.logs_dir / self.date
+            self.scenario_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Сохраняем для обратной совместимости
+        self.date_dir = self.scenario_dir
         
         # Метаданные сессии
         self.session_start = datetime.now()
@@ -39,16 +61,35 @@ class LLMLogger:
         self.chat_id = None
         self.user_id = None
         
-        logger.info(f"📁 LLM Logger инициализирован: {self.date_dir}")
+        # Статистика времени выполнения этапов
+        self.stage_times = {
+            'cleaning': None,
+            'summarization': None,
+            'reflection': None,
+            'improvement': None
+        }
+        
+        logger.info(f"📁 LLM Logger инициализирован: {self.scenario_dir}")
+    
+    def log_stage_time(self, stage: str, duration: float):
+        """
+        Записать время выполнения этапа
+        
+        Args:
+            stage: Название этапа (cleaning, summarization, reflection, improvement)
+            duration: Время выполнения в секундах
+        """
+        if stage in self.stage_times:
+            self.stage_times[stage] = duration
     
     def clear_date_logs(self):
-        """Remove all existing log files for this date before starting new session"""
+        """Remove all existing log files for this scenario before starting new session"""
         import shutil
         
-        if self.date_dir.exists():
-            logger.info(f"🗑️  Clearing old logs for {self.date}")
-            shutil.rmtree(self.date_dir)
-            self.date_dir.mkdir(parents=True, exist_ok=True)
+        if self.scenario_dir.exists():
+            logger.info(f"🗑️  Clearing old logs for scenario: {self.scenario_dir}")
+            shutil.rmtree(self.scenario_dir)
+            self.scenario_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"✅ Old logs cleared, fresh directory created")
     
     def set_session_info(self, provider_name: str, model_name: Optional[str] = None, 
@@ -80,7 +121,7 @@ class LLMLogger:
             additional_info: Дополнительная информация
         """
         try:
-            file_path = self.date_dir / filename
+            file_path = self.scenario_dir / filename
             
             # Формируем заголовок
             header_lines = [
@@ -123,7 +164,7 @@ class LLMLogger:
         """
         additional_info = {"Количество сообщений": message_count} if message_count > 0 else None
         self._write_file(
-            "01_formatted_messages.txt",
+            "04_formatted_messages.txt",
             formatted_text,
             "Форматированные сообщения для суммаризации",
             additional_info
@@ -138,9 +179,9 @@ class LLMLogger:
             request_type: Тип запроса (summarization, reflection, improvement)
         """
         filename_map = {
-            "summarization": "02_summarization_request.txt",
-            "reflection": "04_reflection_request.txt", 
-            "improvement": "06_improvement_request.txt"
+            "summarization": "05_summarization_request.txt",
+            "reflection": "07_reflection_request.txt", 
+            "improvement": "09_improvement_request.txt"
         }
         
         title_map = {
@@ -159,18 +200,19 @@ class LLMLogger:
         
         self._write_file(filename, prompt, title, additional_info)
     
-    def log_llm_response(self, response: str, request_type: str = "summarization"):
+    def log_llm_response(self, response: str, request_type: str = "summarization", response_time: float = None):
         """
         Логировать ответ от LLM
         
         Args:
             response: Ответ от LLM
             request_type: Тип запроса (summarization, reflection, improvement)
+            response_time: Время ответа в секундах
         """
         filename_map = {
-            "summarization": "03_summarization_response.txt",
-            "reflection": "05_reflection_response.txt",
-            "improvement": "07_improvement_response.txt"
+            "summarization": "06_summarization_response.txt",
+            "reflection": "08_reflection_response.txt",
+            "improvement": "10_improvement_response.txt"
         }
         
         title_map = {
@@ -182,10 +224,21 @@ class LLMLogger:
         filename = filename_map.get(request_type, "03_llm_response.txt")
         title = title_map.get(request_type, "Ответ от LLM")
         
+        # Подсчитываем примерное количество токенов
+        estimated_tokens = len(response) // 4  # Примерно 4 символа = 1 токен
+        
         additional_info = {
             "Тип ответа": request_type,
-            "Длина ответа": f"{len(response)} символов"
+            "Длина ответа": f"{len(response)} символов",
+            "Примерное количество токенов": f"~{estimated_tokens}"
         }
+        
+        # Добавляем информацию о времени ответа и скорости
+        if response_time is not None:
+            additional_info["Время ответа"] = f"{response_time:.2f} секунд"
+            if response_time > 0:
+                tokens_per_sec = estimated_tokens / response_time
+                additional_info["Скорость генерации"] = f"{tokens_per_sec:.1f} токенов/сек"
         
         self._write_file(filename, response, title, additional_info)
     
@@ -198,7 +251,7 @@ class LLMLogger:
         """
         additional_info = {"Длина текста": f"{len(raw_text)} символов"}
         self._write_file(
-            "08_raw_result.txt",
+            "11_raw_result.txt",
             raw_text,
             "Сырой результат суммаризации",
             additional_info
@@ -213,7 +266,7 @@ class LLMLogger:
         """
         additional_info = {"Длина текста": f"{len(formatted_text)} символов"}
         self._write_file(
-            "09_formatted_result.txt",
+            "12_formatted_result.txt",
             formatted_text,
             "Форматированный результат для Telegram",
             additional_info
@@ -228,11 +281,30 @@ class LLMLogger:
         """
         session_duration = datetime.now() - self.session_start
         
-        summary_content = f"""Длительность сессии: {session_duration}
+        # Форматируем время выполнения этапов
+        def format_stage_time(stage_name: str, time_seconds: float) -> str:
+            if time_seconds is None:
+                return "❌ Не выполнялся"
+            return f"✅ {time_seconds:.1f}с"
+        
+        summary_content = f"""=== Сводка сессии логирования ===
+Дата: {self.session_start.strftime('%Y-%m-%d')}
+Время: {self.session_start.strftime('%H:%M:%S')}
+Провайдер: {self.provider_name}
+Модель: {self.model_name or 'не указана'}
+Длительность: {session_duration}
+
+Длительность сессии: {session_duration}
 Провайдер: {self.provider_name}
 Модель: {self.model_name or 'не указана'}
 Чат ID: {self.chat_id or 'не указан'}
 Пользователь ID: {self.user_id or 'не указан'}
+
+⏱️ Время выполнения этапов:
+- Очистка данных: {format_stage_time('Очистка', self.stage_times.get('cleaning'))}
+- Суммаризация: {format_stage_time('Суммаризация', self.stage_times.get('summarization'))}
+- Рефлексия: {format_stage_time('Рефлексия', self.stage_times.get('reflection'))}
+- Улучшение: {format_stage_time('Улучшение', self.stage_times.get('improvement'))}
 
 Результаты:
 - Суммаризация: {'✅' if summary_data.get('summary') else '❌'}
@@ -243,7 +315,7 @@ class LLMLogger:
 """
         
         # Проверяем какие файлы были созданы
-        for i in range(1, 10):
+        for i in range(1, 15):
             filename = f"{i:02d}_*.txt"
             files = list(self.date_dir.glob(filename))
             if files:
@@ -263,7 +335,7 @@ class LLMLogger:
         Returns:
             Путь к папке с логами
         """
-        return str(self.date_dir)
+        return str(self.scenario_dir)
     
     def cleanup_old_logs(self, days_to_keep: int = 30):
         """
@@ -290,3 +362,242 @@ class LLMLogger:
                         
         except Exception as e:
             logger.error(f"❌ Ошибка очистки старых логов: {e}")
+    
+    def log_cleaning_request(self, request_text: str):
+        """
+        Логирует запрос на очистку данных
+        
+        Args:
+            request_text: Текст запроса на очистку
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.date_dir / "02_cleaning_request.txt"
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Запрос на очистку данных ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n\n")
+                f.write(f"Запрос:\n{request_text}\n")
+            
+            logger.debug(f"📝 Запрос на очистку данных записан: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи запроса на очистку: {e}")
+    
+    def log_cleaning_response(self, response_text: str, response_time: float = None):
+        """
+        Логирует ответ на запрос очистки данных
+        
+        Args:
+            response_text: Текст ответа с очисткой
+            response_time: Время ответа в секундах
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.date_dir / "03_cleaning_response.txt"
+            
+            # Подсчитываем примерное количество токенов
+            estimated_tokens = len(response_text) // 4
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Ответ на запрос очистки данных ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n")
+                f.write(f"Длина ответа: {len(response_text)} символов\n")
+                f.write(f"Примерное количество токенов: ~{estimated_tokens}\n")
+                
+                # Добавляем информацию о времени ответа и скорости
+                if response_time is not None:
+                    f.write(f"Время ответа: {response_time:.2f} секунд\n")
+                    if response_time > 0:
+                        tokens_per_sec = estimated_tokens / response_time
+                        f.write(f"Скорость генерации: {tokens_per_sec:.1f} токенов/сек\n")
+                
+                f.write(f"\nОтвет:\n{response_text}\n")
+            
+            logger.debug(f"📝 Ответ на очистку данных записан: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи ответа на очистку: {e}")
+    
+    def log_input_messages_raw(self, messages: list):
+        """
+        Логирует сырые входящие сообщения
+        
+        Args:
+            messages: Список сообщений для логирования
+        """
+        try:
+            import json
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.scenario_dir / "01_input_messages_raw.txt"
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Сырые входящие сообщения ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n")
+                f.write(f"Количество сообщений: {len(messages)}\n\n")
+                f.write(f"JSON данные:\n{json.dumps(messages, ensure_ascii=False, indent=2)}\n")
+            
+            logger.debug(f"📝 Сырые входящие сообщения записаны: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи сырых входящих сообщений: {e}")
+    
+    def log_filtered_messages_raw(self, messages: list):
+        """
+        Логирует отфильтрованные сообщения после очистки
+        
+        Args:
+            messages: Список отфильтрованных сообщений
+        """
+        try:
+            import json
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.scenario_dir / "04_filtered_messages_raw.txt"
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Отфильтрованные сообщения после очистки ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n")
+                f.write(f"Количество отфильтрованных сообщений: {len(messages)}\n\n")
+                f.write(f"JSON данные:\n{json.dumps(messages, ensure_ascii=False, indent=2)}\n")
+            
+            logger.debug(f"📝 Отфильтрованные сообщения записаны: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи отфильтрованных сообщений: {e}")
+    
+    def log_improvement_request(self, request_text: str):
+        """
+        Логирует запрос на улучшение суммаризации
+        
+        Args:
+            request_text: Текст запроса на улучшение
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.scenario_dir / "09_improvement_request.txt"
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Запрос на улучшение суммаризации ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n\n")
+                f.write(f"Запрос:\n{request_text}\n")
+            
+            logger.debug(f"📝 Запрос на улучшение записан: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи запроса на улучшение: {e}")
+    
+    def log_improvement_response(self, response_text: str, response_time: float = None):
+        """
+        Логирует ответ на запрос улучшения суммаризации
+        
+        Args:
+            response_text: Текст ответа с улучшенной суммаризацией
+            response_time: Время ответа в секундах
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.scenario_dir / "10_improvement_response.txt"
+            
+            # Подсчитываем примерное количество токенов
+            estimated_tokens = len(response_text) // 4
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Ответ на запрос улучшения суммаризации ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n")
+                f.write(f"Длина ответа: {len(response_text)} символов\n")
+                f.write(f"Примерное количество токенов: ~{estimated_tokens}\n")
+                
+                # Добавляем информацию о времени ответа и скорости
+                if response_time is not None:
+                    f.write(f"Время ответа: {response_time:.2f} секунд\n")
+                    if response_time > 0:
+                        tokens_per_sec = estimated_tokens / response_time
+                        f.write(f"Скорость генерации: {tokens_per_sec:.1f} токенов/сек\n")
+                
+                f.write(f"\nОтвет:\n{response_text}\n")
+            
+            logger.debug(f"📝 Ответ на улучшение записан: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи ответа на улучшение: {e}")
+    
+    def log_final_result_raw(self, result):
+        """
+        Логирует сырой финальный результат
+        
+        Args:
+            result: Финальный результат (может быть строкой или словарем)
+        """
+        try:
+            import json
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.scenario_dir / "11_final_result_raw.txt"
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Сырой финальный результат ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n")
+                f.write(f"Тип результата: {type(result).__name__}\n\n")
+                
+                if isinstance(result, dict):
+                    f.write(f"JSON данные:\n{json.dumps(result, ensure_ascii=False, indent=2)}\n")
+                else:
+                    f.write(f"Текст:\n{str(result)}\n")
+            
+            logger.debug(f"📝 Сырой финальный результат записан: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи сырого финального результата: {e}")
+    
+    def log_telegram_formatted(self, formatted_text: str):
+        """
+        Логирует отформатированный текст для Telegram
+        
+        Args:
+            formatted_text: Текст, отформатированный для отправки в Telegram
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.scenario_dir / "13_telegram_formatted.txt"
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Отформатированный текст для Telegram ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n")
+                f.write(f"Длина текста: {len(formatted_text)} символов\n\n")
+                f.write(f"Текст:\n{formatted_text}\n")
+            
+            logger.debug(f"📝 Отформатированный текст для Telegram записан: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи отформатированного текста: {e}")

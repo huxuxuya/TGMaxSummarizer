@@ -13,7 +13,17 @@ class OllamaProvider(BaseAIProvider):
         super().__init__(config)
         self.base_url = config.get('base_url', 'http://localhost:11434')
         self.model = config.get('model', 'deepseek-r1:8b')
-        self.timeout = config.get('timeout', 120)  # Увеличенный таймаут для локальных моделей
+        self.timeout = config.get('timeout', 300)  # Увеличенный таймаут для локальных моделей (5 минут)
+    
+    def set_model(self, model_name: str):
+        """
+        Установить модель для использования
+        
+        Args:
+            model_name: Название модели (например, 'gemma3:12b')
+        """
+        self.model = model_name
+        self.logger.info(f"🔗 Модель Ollama изменена на: {model_name}")
         
     async def summarize_chat(self, messages: List[Dict], chat_context: Optional[Dict] = None) -> str:
         """
@@ -50,11 +60,16 @@ class OllamaProvider(BaseAIProvider):
             if self.llm_logger:
                 self.llm_logger.log_llm_request(formatted_text, "summarization")
             
+            import time
+            start_time = time.time()
             summary = await self._call_ollama_api(formatted_text)
+            end_time = time.time()
+            response_time = end_time - start_time
             
             # Логируем ответ если логгер установлен
             if self.llm_logger and summary:
-                self.llm_logger.log_llm_response(summary, "summarization")
+                self.llm_logger.log_llm_response(summary, "summarization", response_time)
+                self.llm_logger.log_stage_time('summarization', response_time)
             
             if summary:
                 self.logger.info("✅ Суммаризация получена от Ollama")
@@ -114,6 +129,9 @@ class OllamaProvider(BaseAIProvider):
             Сгенерированный ответ или None при ошибке
         """
         try:
+            import time
+            start_time = time.time()
+            
             self.logger.info(f"🤖 Генерируем ответ через Ollama на промпт длиной {len(prompt)} символов")
             self.logger.debug(f"=== GENERATE_RESPONSE INPUT ===")
             self.logger.debug(f"Prompt length: {len(prompt)}")
@@ -128,8 +146,11 @@ class OllamaProvider(BaseAIProvider):
             
             response = await self._call_ollama_api(prompt, is_generation=True)
             
+            end_time = time.time()
+            response_time = end_time - start_time
+            
             if response:
-                self.logger.info(f"✅ Получен ответ от Ollama длиной {len(response)} символов")
+                self.logger.info(f"✅ Получен ответ от Ollama длиной {len(response)} символов за {response_time:.2f}с")
                 self.logger.debug(f"=== GENERATE_RESPONSE OUTPUT ===")
                 self.logger.debug(f"Response length: {len(response)}")
                 self.logger.debug(f"Response preview: {response[:200]}...")
@@ -139,7 +160,13 @@ class OllamaProvider(BaseAIProvider):
                 if self.llm_logger:
                     # Определяем тип ответа по содержимому промпта
                     request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
-                    self.llm_logger.log_llm_response(response, request_type)
+                    self.llm_logger.log_llm_response(response, request_type, response_time)
+                    
+                    # Записываем время выполнения этапа
+                    if request_type == "reflection":
+                        self.llm_logger.log_stage_time('reflection', response_time)
+                    elif request_type == "improvement":
+                        self.llm_logger.log_stage_time('improvement', response_time)
                 
                 return response
             else:
@@ -260,3 +287,43 @@ class OllamaProvider(BaseAIProvider):
         except Exception as e:
             self.logger.error(f"❌ Неожиданная ошибка Ollama: {e}")
             return None
+    
+    async def get_available_models(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Получить список доступных моделей Ollama
+        
+        Returns:
+            Словарь с информацией о моделях
+        """
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{self.base_url}/api/tags", timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        models = {}
+                        
+                        if 'models' in data:
+                            for model_info in data['models']:
+                                model_name = model_info.get('name', '')
+                                if model_name:
+                                    # Создаем отображаемое имя
+                                    display_name = model_name.replace(':', ' ').title()
+                                    
+                                    models[model_name] = {
+                                        'display_name': display_name,
+                                        'name': model_name,
+                                        'size': model_info.get('size', 0),
+                                        'modified_at': model_info.get('modified_at', ''),
+                                        'free': True  # Локальные модели всегда бесплатные
+                                    }
+                        
+                        self.logger.info(f"✅ Получено {len(models)} моделей Ollama")
+                        return models
+                    else:
+                        error_text = await response.text()
+                        self.logger.error(f"❌ Ошибка получения моделей Ollama: {response.status} - {error_text}")
+                        return {}
+                        
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка получения моделей Ollama: {e}")
+            return {}

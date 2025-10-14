@@ -172,7 +172,7 @@ class TelegramMessageSender:
             Отформатированный текст
         """
         if parse_mode == ParseMode.MARKDOWN_V2:
-            return TelegramMessageSender.format_text_for_markdown_v2(text)
+            return TelegramFormatter.escape_markdown_v2(text)
         elif parse_mode == ParseMode.HTML:
             return TelegramMessageSender.format_text_for_html(text)
         else:
@@ -206,6 +206,7 @@ class TelegramMessageSender:
         reply_markup: Optional[InlineKeyboardMarkup] = None,
         parse_mode: ParseMode = ParseMode.MARKDOWN_V2,
         disable_notification: bool = False,
+        disable_web_page_preview: bool = False,
         **kwargs
     ) -> bool:
         """
@@ -219,6 +220,7 @@ class TelegramMessageSender:
             reply_markup: Клавиатура (опционально)
             parse_mode: Режим парсинга (по умолчанию MARKDOWN_V2)
             disable_notification: Отключить уведомления
+            disable_web_page_preview: Отключить превью ссылок
             **kwargs: Дополнительные параметры для send_message
         
         Returns:
@@ -252,6 +254,7 @@ class TelegramMessageSender:
                     reply_markup=reply_markup,
                     parse_mode=ParseMode.MARKDOWN_V2,
                     disable_notification=disable_notification,
+                    disable_web_page_preview=disable_web_page_preview,
                     **kwargs
                 )
             elif parse_mode == ParseMode.HTML:
@@ -265,6 +268,7 @@ class TelegramMessageSender:
                     reply_markup=reply_markup,
                     parse_mode=ParseMode.HTML,
                     disable_notification=disable_notification,
+                    disable_web_page_preview=disable_web_page_preview,
                     **kwargs
                 )
             else:
@@ -275,6 +279,7 @@ class TelegramMessageSender:
                     reply_markup=reply_markup,
                     parse_mode=None,
                     disable_notification=disable_notification,
+                    disable_web_page_preview=disable_web_page_preview,
                     **kwargs
                 )
             
@@ -294,6 +299,7 @@ class TelegramMessageSender:
                     reply_markup=reply_markup,
                     parse_mode=None,
                     disable_notification=disable_notification,
+                    disable_web_page_preview=disable_web_page_preview,
                     **kwargs
                 )
                 logger.debug("✅ Fallback message sent successfully")

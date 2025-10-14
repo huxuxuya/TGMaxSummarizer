@@ -2,6 +2,7 @@
 Анализ чатов с помощью модульной системы AI провайдеров
 """
 import logging
+import os
 import re
 from typing import List, Dict, Optional, Any
 from datetime import datetime
@@ -385,7 +386,7 @@ class ChatAnalyzer:
             
             return full_text
     
-    async def analyze_chat_with_specific_model(self, messages: List[Dict], provider_name: str, model_id: str = None, user_id: int = None) -> Optional[str]:
+    async def analyze_chat_with_specific_model(self, messages: List[Dict], provider_name: str, model_id: str = None, user_id: int = None, enable_reflection: bool = None, clean_data_first: bool = False) -> Optional[str]:
         """
         Анализ чата с конкретной моделью (для выбора модели при анализе)
         
@@ -394,6 +395,8 @@ class ChatAnalyzer:
             provider_name: Название провайдера
             model_id: ID модели (для OpenRouter)
             user_id: ID пользователя
+            enable_reflection: Переопределение настройки рефлексии (None = использовать глобальную)
+            clean_data_first: Предварительная очистка данных через LLM
             
         Returns:
             Суммаризация или None при ошибке
@@ -422,8 +425,26 @@ class ChatAnalyzer:
                         except (ValueError, OSError):
                             pass
                 
-                llm_logger = LLMLogger(LLM_LOGS_DIR, date=date)
-                llm_logger.clear_date_logs()  # Очищаем старые логи для этой даты
+                # Определяем сценарий
+                if clean_data_first:
+                    scenario = "with_cleaning"
+                elif enable_reflection if enable_reflection is not None else ENABLE_REFLECTION:
+                    scenario = "with_reflection"
+                else:
+                    scenario = "without_reflection"
+                
+                # Проверяем, есть ли в окружении флаг тестового режима
+                test_mode = os.environ.get('TEST_MODE') == 'true'
+                test_model = os.environ.get('TEST_MODEL_NAME')
+                
+                llm_logger = LLMLogger(
+                    LLM_LOGS_DIR, 
+                    date=date, 
+                    scenario=scenario,
+                    test_mode=test_mode,
+                    model_name=test_model
+                )
+                # НЕ очищаем старые логи - каждый запуск в свою папку
                 llm_logger.set_session_info(provider_name, model_id, None, user_id)
                 logger.info(f"📁 LLM Logger создан: {llm_logger.get_logs_path()}")
             
@@ -442,14 +463,40 @@ class ChatAnalyzer:
                 logger.error(f"❌ Не удалось инициализировать провайдер: {provider_name}")
                 return None
             
-            # Если это OpenRouter и указана модель, устанавливаем её
-            if provider_name == 'openrouter' and model_id and hasattr(provider, 'set_model'):
+            # Если указана модель, устанавливаем её для соответствующего провайдера
+            if model_id and hasattr(provider, 'set_model'):
                 provider.set_model(model_id)
-                logger.info(f"🔗 Установлена модель OpenRouter: {model_id}")
+                logger.info(f"🔗 Установлена модель {provider_name}: {model_id}")
             
             # Оптимизация и логирование теперь происходит в провайдерах
             
-            # Создаем контекст чата
+            # Логируем входные сообщения (сырые данные)
+            if llm_logger:
+                llm_logger.log_input_messages_raw(messages)
+            
+            # Предварительная очистка данных, если требуется (САМЫЙ ПЕРВЫЙ ШАГ)
+            if clean_data_first:
+                logger.info("🧹 Выполняем предварительную очистку данных...")
+                
+                # Создаем временный контекст для очистки
+                temp_chat_context = {
+                    'total_messages': len(messages),
+                    'date': messages[0].get('message_time', 0) if messages else 0,
+                    'provider': provider_name,
+                    'model': model_id
+                }
+                
+                messages = await self.clean_messages(provider, messages, temp_chat_context, llm_logger)
+                if not messages:
+                    logger.error("❌ Очистка данных не удалась или не осталось сообщений")
+                    return None
+                logger.info(f"✅ Очистка завершена, осталось {len(messages)} сообщений")
+                
+                # Логируем отфильтрованные сообщения
+                if llm_logger:
+                    llm_logger.log_filtered_messages_raw(messages)
+            
+            # Создаем контекст чата (после очистки, если она была)
             chat_context = {
                 'total_messages': len(messages),
                 'date': messages[0].get('message_time', 0) if messages else 0,
@@ -486,8 +533,13 @@ class ChatAnalyzer:
                 logger.debug(f"=== REFLECTION CHECK ===")
                 logger.debug(f"ENABLE_REFLECTION value: {ENABLE_REFLECTION}")
                 logger.debug(f"ENABLE_REFLECTION type: {type(ENABLE_REFLECTION)}")
+                logger.debug(f"enable_reflection override: {enable_reflection}")
                 
-                if ENABLE_REFLECTION:
+                # Определяем, нужно ли выполнять рефлексию
+                should_reflect = enable_reflection if enable_reflection is not None else ENABLE_REFLECTION
+                logger.debug(f"should_reflect: {should_reflect}")
+                
+                if should_reflect:
                     logger.debug("=== REFLECTION ENABLED ===")
                     logger.debug(f"Provider: {provider}")
                     logger.debug(f"Summary: {summary[:100]}...")
@@ -515,6 +567,7 @@ class ChatAnalyzer:
                             llm_logger.log_raw_result(summary)
                             llm_logger.log_formatted_result(result['display_text'])
                             llm_logger.log_session_summary(result)
+                            llm_logger.log_final_result_raw(result)
                         
                         return result
                     
@@ -548,6 +601,7 @@ class ChatAnalyzer:
                                     llm_logger.log_raw_result(summary)
                                     llm_logger.log_formatted_result(result['display_text'])
                                     llm_logger.log_session_summary(result)
+                                    llm_logger.log_final_result_raw(result)
                                 
                                 return result
                             else:
@@ -565,6 +619,7 @@ class ChatAnalyzer:
                                     llm_logger.log_raw_result(summary)
                                     llm_logger.log_formatted_result(result['display_text'])
                                     llm_logger.log_session_summary(result)
+                                    llm_logger.log_final_result_raw(result)
                                 
                                 return result
                         else:
@@ -599,6 +654,7 @@ class ChatAnalyzer:
                         llm_logger.log_raw_result(summary)
                         llm_logger.log_formatted_result(result['display_text'])
                         llm_logger.log_session_summary(result)
+                        llm_logger.log_final_result_raw(result)
                     
                     return result
                 
@@ -685,8 +741,21 @@ class ChatAnalyzer:
             # Создаем промпт для улучшения
             improvement_prompt = self._create_improvement_prompt(original_summary, reflection, messages, chat_context)
             
+            # Логируем запрос на улучшение
+            if llm_logger:
+                llm_logger.log_improvement_request(improvement_prompt)
+            
             # Выполняем улучшение
+            import time
+            start_time = time.time()
             improved_summary = await provider.generate_response(improvement_prompt)
+            end_time = time.time()
+            response_time = end_time - start_time
+            
+            # Логируем ответ на улучшение
+            if llm_logger and improved_summary:
+                llm_logger.log_improvement_response(improved_summary, response_time)
+                llm_logger.log_stage_time('improvement', response_time)
             
             if improved_summary:
                 logger.info("✅ Суммаризация успешно улучшена")
@@ -713,3 +782,87 @@ class ChatAnalyzer:
             Промпт для улучшения
         """
         return PromptTemplates.get_improvement_prompt(original_summary, reflection)
+    
+    async def clean_messages(self, provider, messages: List[Dict], chat_context: dict, llm_logger = None) -> List[Dict]:
+        """
+        Очистка сообщений через LLM перед суммаризацией
+        Удаляет шум, координацию, микроменеджмент
+        
+        Args:
+            provider: Провайдер AI
+            messages: Список сообщений для очистки
+            chat_context: Контекст чата
+            llm_logger: Логгер для записи запросов
+            
+        Returns:
+            Отфильтрованный список сообщений
+        """
+        try:
+            logger.info(f"🧹 Начинаем очистку {len(messages)} сообщений...")
+            
+            # Подготавливаем данные для промпта
+            messages_text = ""
+            for i, msg in enumerate(messages):
+                message_id = msg.get('id', i)
+                text = msg.get('text', '').strip()
+                if text:
+                    messages_text += f"ID: {message_id}\nТекст: {text}\n\n"
+            
+            if not messages_text.strip():
+                logger.warning("⚠️ Нет текстовых сообщений для очистки")
+                return messages
+            
+            # Создаем промпт для очистки
+            from prompts import PromptTemplates
+            cleaning_prompt = PromptTemplates.DATA_CLEANING_PROMPT.format(messages=messages_text)
+            
+            # Логируем запрос очистки
+            if llm_logger:
+                llm_logger.log_cleaning_request(cleaning_prompt)
+            
+            # Выполняем очистку через LLM
+            import time
+            start_time = time.time()
+            response = await provider.generate_response(cleaning_prompt)
+            end_time = time.time()
+            response_time = end_time - start_time
+            
+            if not response:
+                logger.error("❌ Не удалось получить ответ от LLM для очистки данных")
+                return messages
+            
+            # Логируем ответ очистки
+            if llm_logger:
+                llm_logger.log_cleaning_response(response, response_time)
+                llm_logger.log_stage_time('cleaning', response_time)
+            
+            # Парсим JSON ответ
+            import json
+            import re
+            
+            # Извлекаем JSON из ответа (может быть обернут в текст)
+            json_match = re.search(r'\[[\d,\s]+\]', response)
+            if not json_match:
+                logger.error(f"❌ Не удалось найти JSON массив в ответе: {response}")
+                return messages
+            
+            try:
+                selected_ids = json.loads(json_match.group())
+                logger.info(f"✅ LLM выбрал {len(selected_ids)} сообщений из {len(messages)}")
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Ошибка парсинга JSON: {e}")
+                return messages
+            
+            # Фильтруем сообщения по выбранным ID
+            cleaned_messages = []
+            for i, msg in enumerate(messages):
+                message_id = msg.get('id', i)
+                if message_id in selected_ids:
+                    cleaned_messages.append(msg)
+            
+            logger.info(f"✅ Очистка завершена: {len(cleaned_messages)} из {len(messages)} сообщений")
+            return cleaned_messages
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при очистке сообщений: {e}")
+            return messages
