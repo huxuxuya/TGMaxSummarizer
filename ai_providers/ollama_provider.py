@@ -11,9 +11,9 @@ class OllamaProvider(BaseAIProvider):
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self.base_url = config.get('OLLAMA_BASE_URL', 'http://localhost:11434')
-        self.model = config.get('OLLAMA_MODEL', 'gpt-oss:20b')
-        self.timeout = config.get('OLLAMA_TIMEOUT', 120)  # Увеличенный таймаут для локальных моделей
+        self.base_url = config.get('base_url', 'http://localhost:11434')
+        self.model = config.get('model', 'deepseek-r1:8b')
+        self.timeout = config.get('timeout', 120)  # Увеличенный таймаут для локальных моделей
         
     async def summarize_chat(self, messages: List[Dict], chat_context: Optional[Dict] = None) -> str:
         """

@@ -51,16 +51,16 @@ AI_PROVIDERS = {
     },
     'ollama': {
         'base_url': os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-        'model': os.getenv("OLLAMA_MODEL", "gpt-oss:20b"),
+        'model': os.getenv("OLLAMA_MODEL", "deepseek-r1:8b"),
         'timeout': int(os.getenv("OLLAMA_TIMEOUT", "120")),
         'enabled': True,
-        'display_name': 'Ollama (Локальная)',
-        'description': 'Локальная модель gpt-oss:20b через Ollama'
+        'display_name': 'Ollama (DeepSeek R1)',
+        'description': 'Локальная модель deepseek-r1:8b через Ollama'
     }
 }
 
 # AI Provider Settings
-DEFAULT_AI_PROVIDER = os.getenv("DEFAULT_AI_PROVIDER", "gigachat")
+DEFAULT_AI_PROVIDER = os.getenv("DEFAULT_AI_PROVIDER", "ollama")
 FALLBACK_PROVIDERS = os.getenv("FALLBACK_PROVIDERS", "chatgpt,gemini").split(',')
 AI_PROVIDER_TIMEOUT = int(os.getenv("AI_PROVIDER_TIMEOUT", "30"))
 AI_PROVIDER_MAX_RETRIES = int(os.getenv("AI_PROVIDER_MAX_RETRIES", "3"))
