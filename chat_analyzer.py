@@ -1,6 +1,7 @@
 """
 Анализ чатов с помощью модульной системы AI провайдеров
 """
+import json
 import logging
 import os
 import re
@@ -866,3 +867,432 @@ class ChatAnalyzer:
         except Exception as e:
             logger.error(f"❌ Ошибка при очистке сообщений: {e}")
             return messages
+    
+    async def structured_analysis(self, provider, messages: List[Dict], chat_context: dict, llm_logger=None) -> dict:
+        """
+        Структурированный анализ с классификацией и экстракцией
+        
+        Args:
+            provider: Провайдер AI
+            messages: Список сообщений для анализа
+            chat_context: Контекст чата
+            llm_logger: Логгер для записи запросов
+            
+        Returns:
+            Словарь с результатами анализа
+        """
+        try:
+            logger.info("🔍 Начинаем структурированный анализ...")
+            
+            # Шаг 1: Классификация сообщений
+            logger.info("📊 Шаг 1: Классификация сообщений...")
+            classification = await self._classify_messages(provider, messages, llm_logger)
+            
+            if not classification:
+                logger.error("❌ Классификация не удалась")
+                return None
+            
+            # Фильтруем irrelevant сообщения
+            relevant_messages = self._filter_by_classification(messages, classification)
+            logger.info(f"✅ Классификация завершена: {len(relevant_messages)} релевантных из {len(messages)} сообщений")
+            
+            # Шаг 2: Экстракция слотов
+            logger.info("🔍 Шаг 2: Экстракция слотов...")
+            events = await self._extract_slots(provider, relevant_messages, classification, llm_logger)
+            
+            if not events:
+                logger.error("❌ Экстракция слотов не удалась")
+                return None
+            
+            logger.info(f"✅ Экстракция завершена: {len(events)} событий")
+            
+            # Шаг 3: Финальная сводка
+            logger.info("📝 Шаг 3: Генерация сводки для родителей...")
+            summary = await self._generate_parent_summary(provider, events, llm_logger)
+            
+            if not summary:
+                logger.error("❌ Генерация сводки не удалась")
+                return None
+            
+            logger.info("✅ Структурированный анализ завершен успешно")
+            
+            return {
+                'summary': summary,
+                'events': events,
+                'classification': classification
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при структурированном анализе: {e}")
+            return None
+    
+    async def _classify_messages(self, provider, messages: List[Dict], llm_logger=None, retry_count=0) -> List[Dict]:
+        """
+        Классификация сообщений с повторной попыткой при невалидном JSON
+        
+        Args:
+            provider: Провайдер AI
+            messages: Список сообщений
+            llm_logger: Логгер
+            retry_count: Количество попыток
+            
+        Returns:
+            Список классифицированных сообщений
+        """
+        try:
+            # Импортируем промпт
+            from prompts import MESSAGE_CLASSIFICATION_PROMPT
+            
+            # Формируем JSON для промпта
+            messages_json = json.dumps([{"id": msg.get('message_id', msg.get('id', '')), "text": msg.get('text')} for msg in messages], ensure_ascii=False)
+            
+            # Формируем промпт
+            prompt = MESSAGE_CLASSIFICATION_PROMPT.format(messages_json=messages_json)
+            
+            # Логируем запрос
+            if llm_logger:
+                llm_logger.log_classification_request(prompt)
+            
+            # Получаем ответ
+            import time
+            start_time = time.time()
+            response = await provider.generate_response(prompt)
+            end_time = time.time()
+            response_time = end_time - start_time
+            
+            if not response:
+                logger.error("❌ Не удалось получить ответ от LLM для классификации")
+                return []
+            
+            # Логируем ответ
+            if llm_logger:
+                llm_logger.log_classification_response(response, response_time)
+                llm_logger.log_stage_time('classification', response_time)
+            
+            # Валидация JSON
+            try:
+                # Очищаем ответ от markdown блоков
+                cleaned_response = self._clean_json_response(response)
+                classification = json.loads(cleaned_response)
+                logger.info(f"✅ Классификация получена: {len(classification)} сообщений")
+                return classification
+            except json.JSONDecodeError as e:
+                if retry_count < 2:
+                    logger.warning(f"⚠️ Ошибка парсинга JSON (попытка {retry_count + 1}): {str(e)}")
+                    # Повторная попытка с указанием ошибки
+                    error_prompt = f"{prompt}\n\nОШИБКА ПАРСИНГА JSON: {str(e)}\nИсправь формат и верни только валидный JSON-массив."
+                    return await self._classify_messages_with_error(provider, error_prompt, llm_logger, retry_count + 1)
+                else:
+                    logger.error(f"❌ Не удалось получить валидный JSON после {retry_count + 1} попыток")
+                    return []
+                    
+        except Exception as e:
+            logger.error(f"❌ Ошибка при классификации сообщений: {e}")
+            return []
+    
+    async def _classify_messages_with_error(self, provider, error_prompt: str, llm_logger=None, retry_count=0) -> List[Dict]:
+        """
+        Повторная попытка классификации с указанием ошибки
+        
+        Args:
+            provider: Провайдер AI
+            error_prompt: Промпт с указанием ошибки
+            llm_logger: Логгер
+            retry_count: Количество попыток
+            
+        Returns:
+            Список классифицированных сообщений
+        """
+        try:
+            # Получаем ответ
+            import time
+            start_time = time.time()
+            response = await provider.generate_response(error_prompt)
+            end_time = time.time()
+            response_time = end_time - start_time
+            
+            if not response:
+                logger.error("❌ Не удалось получить ответ от LLM для повторной классификации")
+                return []
+            
+            # Логируем ответ
+            if llm_logger:
+                llm_logger.log_classification_response(response, response_time)
+                llm_logger.log_stage_time('classification', response_time)
+            
+            # Валидация JSON
+            try:
+                # Очищаем ответ от markdown блоков
+                cleaned_response = self._clean_json_response(response)
+                classification = json.loads(cleaned_response)
+                logger.info(f"✅ Повторная классификация успешна: {len(classification)} сообщений")
+                return classification
+            except json.JSONDecodeError as e:
+                if retry_count < 2:
+                    logger.warning(f"⚠️ Ошибка парсинга JSON при повторной попытке (попытка {retry_count + 1}): {str(e)}")
+                    # Еще одна попытка
+                    new_error_prompt = f"{error_prompt}\n\nОШИБКА ПАРСИНГА JSON: {str(e)}\nИсправь формат и верни только валидный JSON-массив."
+                    return await self._classify_messages_with_error(provider, new_error_prompt, llm_logger, retry_count + 1)
+                else:
+                    logger.error(f"❌ Не удалось получить валидный JSON после {retry_count + 1} повторных попыток")
+                    return []
+                    
+        except Exception as e:
+            logger.error(f"❌ Ошибка при повторной классификации: {e}")
+            return []
+    
+    def _filter_by_classification(self, messages: List[Dict], classification: List[Dict]) -> List[Dict]:
+        """
+        Фильтрует сообщения по результатам классификации, исключая irrelevant
+        
+        Args:
+            messages: Исходные сообщения
+            classification: Результаты классификации
+            
+        Returns:
+            Отфильтрованные сообщения
+        """
+        try:
+            # Создаем словарь классификации для быстрого поиска
+            classification_dict = {item.get('message_id'): item.get('class') for item in classification}
+            
+            # Фильтруем сообщения
+            relevant_messages = []
+            for msg in messages:
+                message_id = str(msg.get('message_id', msg.get('id', '')))
+                msg_class = classification_dict.get(message_id)
+                
+                if msg_class and msg_class != 'irrelevant':
+                    relevant_messages.append(msg)
+            
+            logger.info(f"✅ Фильтрация завершена: {len(relevant_messages)} релевантных из {len(messages)} сообщений")
+            return relevant_messages
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при фильтрации сообщений: {e}")
+            return messages
+    
+    async def _extract_slots(self, provider, messages: List[Dict], classification: List[Dict], llm_logger=None) -> List[Dict]:
+        """
+        Экстракция слотов из сообщений
+        
+        Args:
+            provider: Провайдер AI
+            messages: Список сообщений
+            classification: Результаты классификации
+            llm_logger: Логгер
+            
+        Returns:
+            Список извлеченных событий
+        """
+        try:
+            # Импортируем промпт
+            from prompts import SLOT_EXTRACTION_PROMPT
+            
+            # Создаем словарь классификации для быстрого поиска
+            classification_dict = {item.get('message_id'): item.get('class') for item in classification}
+            
+            # Формируем JSON для промпта с включением класса
+            messages_with_class = []
+            for msg in messages:
+                message_id = str(msg.get('message_id', msg.get('id', '')))
+                msg_class = classification_dict.get(message_id, 'unknown')
+                messages_with_class.append({
+                    "id": message_id,
+                    "text": msg.get('text'),
+                    "type": msg_class
+                })
+            
+            messages_json = json.dumps(messages_with_class, ensure_ascii=False)
+            
+            # Формируем промпт
+            prompt = SLOT_EXTRACTION_PROMPT.format(messages_json=messages_json)
+            
+            # Логируем запрос
+            if llm_logger:
+                llm_logger.log_extraction_request(prompt)
+            
+            # Получаем ответ
+            import time
+            start_time = time.time()
+            response = await provider.generate_response(prompt)
+            end_time = time.time()
+            response_time = end_time - start_time
+            
+            if not response:
+                logger.error("❌ Не удалось получить ответ от LLM для экстракции")
+                return []
+            
+            # Логируем ответ
+            if llm_logger:
+                llm_logger.log_extraction_response(response, response_time)
+                llm_logger.log_stage_time('extraction', response_time)
+            
+            # Валидация JSON
+            try:
+                # Очищаем ответ от markdown блоков
+                cleaned_response = self._clean_json_response(response)
+                events = json.loads(cleaned_response)
+                logger.info(f"✅ Экстракция завершена: {len(events)} событий")
+                return events
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Ошибка парсинга JSON при экстракции: {str(e)}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка при экстракции слотов: {e}")
+            return []
+    
+    async def _generate_parent_summary(self, provider, events: List[Dict], llm_logger=None) -> str:
+        """
+        Генерация итоговой сводки для родителей
+        
+        Args:
+            provider: Провайдер AI
+            events: Список извлеченных событий
+            llm_logger: Логгер
+            
+        Returns:
+            Текст сводки для родителей
+        """
+        try:
+            # Импортируем промпт
+            from prompts import PARENT_SUMMARY_PROMPT
+            
+            # Формируем JSON для промпта
+            events_json = json.dumps(events, ensure_ascii=False, indent=2)
+            
+            # Формируем промпт
+            prompt = PARENT_SUMMARY_PROMPT.format(events_json=events_json)
+            
+            # Логируем запрос
+            if llm_logger:
+                llm_logger.log_parent_summary_request(prompt)
+            
+            # Получаем ответ
+            import time
+            start_time = time.time()
+            response = await provider.generate_response(prompt)
+            end_time = time.time()
+            response_time = end_time - start_time
+            
+            if not response:
+                logger.error("❌ Не удалось получить ответ от LLM для генерации сводки")
+                return None
+            
+            # Логируем ответ
+            if llm_logger:
+                llm_logger.log_parent_summary_response(response, response_time)
+                llm_logger.log_stage_time('parent_summary', response_time)
+            
+            logger.info("✅ Сводка для родителей сгенерирована")
+            return response
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при генерации сводки для родителей: {e}")
+            return None
+    
+    async def structured_analysis_with_specific_model(self, messages: List[Dict], provider_name: str, model_name: str, user_id: int) -> dict:
+        """
+        Структурированный анализ с конкретной моделью
+        
+        Args:
+            messages: Список сообщений для анализа
+            provider_name: Имя провайдера
+            model_name: Имя модели
+            user_id: ID пользователя
+            
+        Returns:
+            Результат структурированного анализа
+        """
+        try:
+            # Создаем провайдер
+            provider = self.provider_factory.create_provider(provider_name, self.config)
+            if not provider:
+                logger.error(f"❌ Не удалось создать провайдер {provider_name}")
+                return None
+            
+            # Устанавливаем модель
+            if model_name:
+                provider.set_model(model_name)
+            
+            # Создаем контекст чата
+            chat_context = {
+                'total_messages': len(messages),
+                'date': messages[0].get('date') if messages else None,
+                'chat_id': messages[0].get('vk_chat_id') if messages else None
+            }
+            
+            # Создаем логгер
+            chat_id_for_logger = str(chat_context.get('chat_id', 'unknown'))
+            llm_logger = LLMLogger(scenario="structured_analysis", model_name=model_name)
+            
+            # Устанавливаем метаданные сессии
+            llm_logger.set_session_info(provider_name, model_name, chat_id_for_logger, user_id)
+            
+            # Выполняем структурированный анализ
+            result = await self.structured_analysis(provider, messages, chat_context, llm_logger)
+            
+            if result:
+                # Логируем сырой результат
+                if llm_logger:
+                    llm_logger.log_raw_result(result.get('summary', ''))
+                    llm_logger.log_formatted_result(result.get('summary', ''))
+                    llm_logger.log_session_summary({
+                        'summary': result.get('summary'),
+                        'events': result.get('events'),
+                        'classification': result.get('classification')
+                    })
+                
+                # Возвращаем результат в формате, совместимом с существующей системой
+                return {
+                    'summary': result.get('summary', ''),
+                    'display_text': result.get('summary', ''),
+                    'events': result.get('events', []),
+                    'classification': result.get('classification', [])
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при структурированном анализе с моделью: {e}")
+            return None
+    
+    def _clean_json_response(self, response: str) -> str:
+        """
+        Очищает ответ от markdown блоков и лишнего текста для получения чистого JSON
+        
+        Args:
+            response: Ответ от модели
+            
+        Returns:
+            Очищенный JSON
+        """
+        try:
+            # Убираем markdown блоки ```json ... ```
+            if '```json' in response:
+                start = response.find('```json') + 7
+                end = response.find('```', start)
+                if end != -1:
+                    response = response[start:end].strip()
+            elif '```' in response:
+                start = response.find('```') + 3
+                end = response.find('```', start)
+                if end != -1:
+                    response = response[start:end].strip()
+            
+            # Убираем лишние пробелы и переносы строк
+            response = response.strip()
+            
+            # Ищем начало и конец JSON массива
+            start_bracket = response.find('[')
+            end_bracket = response.rfind(']')
+            
+            if start_bracket != -1 and end_bracket != -1 and end_bracket > start_bracket:
+                response = response[start_bracket:end_bracket + 1]
+            
+            return response
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка при очистке JSON ответа: {e}")
+            return response

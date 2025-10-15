@@ -148,6 +148,10 @@ class BotHandlers:
             chat_id = data.split("_")[3]
             date = data.split("_")[4]
             await self._handle_summarize_with_cleaning(update, context, chat_id, date)
+        elif data.startswith("structured_analysis_"):
+            chat_id = data.split("_")[2]
+            date = data.split("_")[3]
+            await self._handle_structured_analysis(update, context, chat_id, date)
         elif data.startswith("improve_summary_"):
             chat_id = data.split("_")[2]
             date = data.split("_")[3]
@@ -1166,7 +1170,7 @@ class BotHandlers:
                         escaped_date = TelegramFormatter.escape_html(formatted_date)
                         escaped_weekday = TelegramFormatter.escape_html(weekday)
                         header = f"📋 <b>{escaped_date}, {escaped_weekday}</b>"
-                except:
+                except Exception:
                     if chat_name:
                         escaped_chat_name = TelegramFormatter.escape_html(chat_name)
                         escaped_date = TelegramFormatter.escape_html(date)
@@ -1441,6 +1445,7 @@ class BotHandlers:
             [InlineKeyboardButton("🔄 Стандартная (с рефлексией)", callback_data=f"summarize_with_reflection_{chat_id}_{date}")],
             [InlineKeyboardButton("⚡ Быстрая (без рефлексии)", callback_data=f"summarize_without_reflection_{chat_id}_{date}")],
             [InlineKeyboardButton("🧹 С предварительной очисткой данных", callback_data=f"summarize_with_cleaning_{chat_id}_{date}")],
+            [InlineKeyboardButton("🔍 Структурированный анализ", callback_data=f"structured_analysis_{chat_id}_{date}")],
             [InlineKeyboardButton("🔙 Назад", callback_data=f"select_chat_{chat_id}")]
         ]
         
@@ -1449,7 +1454,8 @@ class BotHandlers:
             f"📊 Выберите режим суммаризации для {date}\n\n"
             f"🔄 **Стандартная** - полный анализ с рефлексией и улучшением\n"
             f"⚡ **Быстрая** - только суммаризация без рефлексии\n"
-            f"🧹 **С очисткой** - предварительная фильтрация сообщений + суммаризация",
+            f"🧹 **С очисткой** - предварительная фильтрация сообщений + суммаризация\n"
+            f"🔍 **Структурированный** - классификация + экстракция + сводка для родителей",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     
@@ -1479,6 +1485,17 @@ class BotHandlers:
         context.user_data['summarization_mode'] = 'with_cleaning'
         context.user_data['enable_reflection_override'] = None  # Используем глобальную настройку
         context.user_data['clean_data_first'] = True
+        
+        # Показываем выбор модели для анализа
+        await self.select_model_for_analysis_handler(update, context)
+    
+    async def _handle_structured_analysis(self, update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: str, date: str):
+        """Обработка структурированного анализа"""
+        # Устанавливаем режим в контексте
+        context.user_data['summarization_mode'] = 'structured_analysis'
+        context.user_data['enable_reflection_override'] = False
+        context.user_data['clean_data_first'] = False
+        context.user_data['structured_analysis'] = True
         
         # Показываем выбор модели для анализа
         await self.select_model_for_analysis_handler(update, context)
@@ -2642,12 +2659,20 @@ class BotHandlers:
             enable_reflection = context.user_data.get('enable_reflection_override')
             clean_data_first = context.user_data.get('clean_data_first', False)
             summarization_mode = context.user_data.get('summarization_mode', 'with_reflection')
+            structured_analysis = context.user_data.get('structured_analysis', False)
             
             # Анализируем сообщения с выбранной моделью
-            summary = await self.analyzer.analyze_chat_with_specific_model(
-                messages, selected_provider, selected_model, update.effective_user.id,
-                enable_reflection=enable_reflection, clean_data_first=clean_data_first
-            )
+            if structured_analysis:
+                # Структурированный анализ
+                summary = await self.analyzer.structured_analysis_with_specific_model(
+                    messages, selected_provider, selected_model, update.effective_user.id
+                )
+            else:
+                # Обычный анализ
+                summary = await self.analyzer.analyze_chat_with_specific_model(
+                    messages, selected_provider, selected_model, update.effective_user.id,
+                    enable_reflection=enable_reflection, clean_data_first=clean_data_first
+                )
             
             # Очищаем временные настройки
             context.user_data.pop('selected_analysis_provider', None)
@@ -2656,6 +2681,7 @@ class BotHandlers:
             context.user_data.pop('summarization_mode', None)
             context.user_data.pop('enable_reflection_override', None)
             context.user_data.pop('clean_data_first', None)
+            context.user_data.pop('structured_analysis', None)
             
             if summary:
                 # Сохраняем суммаризацию в БД

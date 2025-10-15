@@ -74,11 +74,12 @@ async def main():
     print("  1. Без рефлексии (быстрая суммаризация)")
     print("  2. С рефлексией (анализ и улучшение)")
     print("  3. С предварительной очисткой (фильтрация + рефлексия)")
-    print("  4. Все сценарии (сравнение)")
+    print("  4. Структурированный анализ (классификация + экстракция + сводка)")
+    print("  5. Все сценарии (сравнение)")
     
-    scenario_choice = input("\nВыберите сценарий (1-4): ").strip()
+    scenario_choice = input("\nВыберите сценарий (1-5): ").strip()
     
-    if scenario_choice not in ['1', '2', '3', '4']:
+    if scenario_choice not in ['1', '2', '3', '4', '5']:
         print("❌ Неверный выбор сценария")
         return
     
@@ -138,9 +139,10 @@ async def main():
     
     # 6. Определяем сценарии для запуска
     all_scenarios = [
-        ("1_without_reflection", False, False, "Без рефлексии"),
-        ("2_with_reflection", True, False, "С рефлексией"),
-        ("3_with_cleaning", True, True, "С предварительной очисткой")
+        ("1_without_reflection", False, False, False, "Без рефлексии"),
+        ("2_with_reflection", True, False, False, "С рефлексией"),
+        ("3_with_cleaning", True, True, False, "С предварительной очисткой"),
+        ("4_structured_analysis", False, False, True, "Структурированный анализ")
     ]
     
     # Выбираем сценарии в зависимости от выбора пользователя
@@ -150,7 +152,9 @@ async def main():
         scenarios_to_run = [all_scenarios[1]]
     elif scenario_choice == '3':
         scenarios_to_run = [all_scenarios[2]]
-    else:  # scenario_choice == '4'
+    elif scenario_choice == '4':
+        scenarios_to_run = [all_scenarios[3]]
+    else:  # scenario_choice == '5'
         scenarios_to_run = all_scenarios
     
     results = {}
@@ -158,20 +162,30 @@ async def main():
     # 7. Запускаем выбранные сценарии
     performance_stats = {}
     
-    for scenario_name, enable_reflection, clean_data_first, description in scenarios_to_run:
+    for scenario_name, enable_reflection, clean_data_first, structured_analysis, description in scenarios_to_run:
         print(f"🔄 Запуск сценария: {description} ({scenario_name})...")
         
         start_time = time.time()
         
         try:
-            result = await analyzer.analyze_chat_with_specific_model(
-                messages=messages,
-                provider_name="ollama",
-                model_id=model_name,
-                user_id=None,
-                enable_reflection=enable_reflection,
-                clean_data_first=clean_data_first
-            )
+            if structured_analysis:
+                # Структурированный анализ
+                result = await analyzer.structured_analysis_with_specific_model(
+                    messages=messages,
+                    provider_name="ollama",
+                    model_name=model_name,
+                    user_id=None
+                )
+            else:
+                # Обычный анализ
+                result = await analyzer.analyze_chat_with_specific_model(
+                    messages=messages,
+                    provider_name="ollama",
+                    model_id=model_name,
+                    user_id=None,
+                    enable_reflection=enable_reflection,
+                    clean_data_first=clean_data_first
+                )
             
             end_time = time.time()
             duration = end_time - start_time
@@ -179,13 +193,26 @@ async def main():
             if result:
                 # Анализируем результат для подсчета токенов
                 if isinstance(result, dict):
-                    # Если результат - словарь (с рефлексией)
-                    summary_text = result.get('summary', '') or ''
-                    reflection_text = result.get('reflection', '') or ''
-                    improved_text = result.get('improved', '') or ''
-                    
-                    total_tokens = estimate_tokens(summary_text) + estimate_tokens(reflection_text) + estimate_tokens(improved_text)
-                    tokens_per_sec = calculate_tokens_per_second(summary_text + reflection_text + improved_text, duration)
+                    if structured_analysis:
+                        # Структурированный анализ
+                        summary_text = result.get('summary', '') or ''
+                        events = result.get('events', [])
+                        classification = result.get('classification', [])
+                        
+                        # Подсчитываем токены для всех компонентов
+                        events_text = str(events) if events else ''
+                        classification_text = str(classification) if classification else ''
+                        
+                        total_tokens = estimate_tokens(summary_text) + estimate_tokens(events_text) + estimate_tokens(classification_text)
+                        tokens_per_sec = calculate_tokens_per_second(summary_text + events_text + classification_text, duration)
+                    else:
+                        # Обычный анализ с рефлексией
+                        summary_text = result.get('summary', '') or ''
+                        reflection_text = result.get('reflection', '') or ''
+                        improved_text = result.get('improved', '') or ''
+                        
+                        total_tokens = estimate_tokens(summary_text) + estimate_tokens(reflection_text) + estimate_tokens(improved_text)
+                        tokens_per_sec = calculate_tokens_per_second(summary_text + reflection_text + improved_text, duration)
                 else:
                     # Если результат - строка (без рефлексии)
                     result_text = str(result) if result else ''

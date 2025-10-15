@@ -42,10 +42,9 @@ class LLMLogger:
                 shutil.rmtree(self.scenario_dir)
             self.scenario_dir.mkdir(parents=True, exist_ok=True)
         elif scenario:
-            # Обычный режим с временной меткой
-            timestamp = datetime.now().strftime("%H-%M-%S")
-            self.scenario_dir = self.logs_dir / self.date / f"{scenario}_{timestamp}"
-            self.scenario_dir.mkdir(parents=True, exist_ok=True)
+            # Обычный режим с временной меткой (папка будет создана позже с учетом модели)
+            self.scenario = scenario
+            self.scenario_dir = None  # Будет создана в create_scenario_dir
         else:
             # Обычный режим без сценария
             self.scenario_dir = self.logs_dir / self.date
@@ -66,7 +65,10 @@ class LLMLogger:
             'cleaning': None,
             'summarization': None,
             'reflection': None,
-            'improvement': None
+            'improvement': None,
+            'classification': None,
+            'extraction': None,
+            'parent_summary': None
         }
         
         logger.info(f"📁 LLM Logger инициализирован: {self.scenario_dir}")
@@ -107,7 +109,28 @@ class LLMLogger:
         self.model_name = model_name
         self.chat_id = chat_id
         self.user_id = user_id
+        
+        # Создаем папку сценария с учетом имени модели
+        self._create_scenario_dir()
+        
         logger.debug(f"📝 Сессия: {provider_name}/{model_name}, чат: {chat_id}, пользователь: {user_id}")
+    
+    def _create_scenario_dir(self):
+        """Создать папку сценария с учетом имени модели"""
+        if hasattr(self, 'scenario') and self.scenario and self.scenario_dir is None:
+            timestamp = datetime.now().strftime("%H-%M-%S")
+            
+            # Формируем имя папки с учетом модели
+            if self.model_name:
+                # Очищаем имя модели от недопустимых символов для имени папки
+                safe_model_name = self.model_name.replace(":", "_").replace("/", "_").replace("\\", "_")
+                folder_name = f"{self.scenario}_{safe_model_name}_{timestamp}"
+            else:
+                folder_name = f"{self.scenario}_{timestamp}"
+            
+            self.scenario_dir = self.logs_dir / self.date / folder_name
+            self.scenario_dir.mkdir(parents=True, exist_ok=True)
+            logger.debug(f"📁 Создана папка логов: {self.scenario_dir}")
     
     def _write_file(self, filename: str, content: str, step_title: str, 
                    additional_info: Optional[Dict[str, Any]] = None):
@@ -121,6 +144,10 @@ class LLMLogger:
             additional_info: Дополнительная информация
         """
         try:
+            # Убеждаемся, что папка создана
+            if self.scenario_dir is None:
+                self._create_scenario_dir()
+            
             file_path = self.scenario_dir / filename
             
             # Формируем заголовок
@@ -305,6 +332,9 @@ class LLMLogger:
 - Суммаризация: {format_stage_time('Суммаризация', self.stage_times.get('summarization'))}
 - Рефлексия: {format_stage_time('Рефлексия', self.stage_times.get('reflection'))}
 - Улучшение: {format_stage_time('Улучшение', self.stage_times.get('improvement'))}
+- Классификация: {format_stage_time('Классификация', self.stage_times.get('classification'))}
+- Экстракция: {format_stage_time('Экстракция', self.stage_times.get('extraction'))}
+- Сводка для родителей: {format_stage_time('Сводка', self.stage_times.get('parent_summary'))}
 
 Результаты:
 - Суммаризация: {'✅' if summary_data.get('summary') else '❌'}
@@ -601,3 +631,194 @@ class LLMLogger:
             
         except Exception as e:
             logger.error(f"❌ Ошибка записи отформатированного текста: {e}")
+    
+    # Методы логирования для структурированного анализа
+    
+    def log_classification_request(self, request_text: str):
+        """
+        Логирует запрос на классификацию сообщений
+        
+        Args:
+            request_text: Текст запроса на классификацию
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.scenario_dir / "01_classification_request.txt"
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Запрос на классификацию сообщений ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n\n")
+                f.write(f"Запрос:\n{request_text}\n")
+            
+            logger.debug(f"📝 Запрос на классификацию записан: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи запроса на классификацию: {e}")
+    
+    def log_classification_response(self, response_text: str, response_time: float = None):
+        """
+        Логирует ответ на запрос классификации
+        
+        Args:
+            response_text: Текст ответа с классификацией
+            response_time: Время ответа в секундах
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.scenario_dir / "02_classification_response.txt"
+            
+            # Подсчитываем примерное количество токенов
+            estimated_tokens = len(response_text) // 4
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Ответ на запрос классификации ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n")
+                f.write(f"Длина ответа: {len(response_text)} символов\n")
+                f.write(f"Примерное количество токенов: ~{estimated_tokens}\n")
+                
+                if response_time is not None:
+                    f.write(f"Время ответа: {response_time:.2f} секунд\n")
+                    if response_time > 0:
+                        tokens_per_sec = estimated_tokens / response_time
+                        f.write(f"Скорость генерации: {tokens_per_sec:.1f} токенов/сек\n")
+                
+                f.write(f"\nОтвет:\n{response_text}\n")
+            
+            logger.debug(f"📝 Ответ на классификацию записан: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи ответа на классификацию: {e}")
+    
+    def log_extraction_request(self, request_text: str):
+        """
+        Логирует запрос на экстракцию слотов
+        
+        Args:
+            request_text: Текст запроса на экстракцию
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.scenario_dir / "03_extraction_request.txt"
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Запрос на экстракцию слотов ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n\n")
+                f.write(f"Запрос:\n{request_text}\n")
+            
+            logger.debug(f"📝 Запрос на экстракцию записан: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи запроса на экстракцию: {e}")
+    
+    def log_extraction_response(self, response_text: str, response_time: float = None):
+        """
+        Логирует ответ на запрос экстракции
+        
+        Args:
+            response_text: Текст ответа с экстракцией
+            response_time: Время ответа в секундах
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.scenario_dir / "04_extraction_response.txt"
+            
+            # Подсчитываем примерное количество токенов
+            estimated_tokens = len(response_text) // 4
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Ответ на запрос экстракции ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n")
+                f.write(f"Длина ответа: {len(response_text)} символов\n")
+                f.write(f"Примерное количество токенов: ~{estimated_tokens}\n")
+                
+                if response_time is not None:
+                    f.write(f"Время ответа: {response_time:.2f} секунд\n")
+                    if response_time > 0:
+                        tokens_per_sec = estimated_tokens / response_time
+                        f.write(f"Скорость генерации: {tokens_per_sec:.1f} токенов/сек\n")
+                
+                f.write(f"\nОтвет:\n{response_text}\n")
+            
+            logger.debug(f"📝 Ответ на экстракцию записан: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи ответа на экстракцию: {e}")
+    
+    def log_parent_summary_request(self, request_text: str):
+        """
+        Логирует запрос на генерацию сводки для родителей
+        
+        Args:
+            request_text: Текст запроса на сводку
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.scenario_dir / "05_parent_summary_request.txt"
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Запрос на генерацию сводки для родителей ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n\n")
+                f.write(f"Запрос:\n{request_text}\n")
+            
+            logger.debug(f"📝 Запрос на сводку для родителей записан: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи запроса на сводку для родителей: {e}")
+    
+    def log_parent_summary_response(self, response_text: str, response_time: float = None):
+        """
+        Логирует ответ на запрос сводки для родителей
+        
+        Args:
+            response_text: Текст ответа со сводкой
+            response_time: Время ответа в секундах
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_file = self.scenario_dir / "06_parent_summary_response.txt"
+            
+            # Подсчитываем примерное количество токенов
+            estimated_tokens = len(response_text) // 4
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== Ответ на запрос сводки для родителей ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n")
+                f.write(f"Длина ответа: {len(response_text)} символов\n")
+                f.write(f"Примерное количество токенов: ~{estimated_tokens}\n")
+                
+                if response_time is not None:
+                    f.write(f"Время ответа: {response_time:.2f} секунд\n")
+                    if response_time > 0:
+                        tokens_per_sec = estimated_tokens / response_time
+                        f.write(f"Скорость генерации: {tokens_per_sec:.1f} токенов/сек\n")
+                
+                f.write(f"\nОтвет:\n{response_text}\n")
+            
+            logger.debug(f"📝 Ответ на сводку для родителей записан: {log_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи ответа на сводку для родителей: {e}")
