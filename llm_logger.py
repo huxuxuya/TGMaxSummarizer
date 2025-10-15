@@ -51,7 +51,11 @@ class LLMLogger:
             self.scenario_dir.mkdir(parents=True, exist_ok=True)
         
         # Сохраняем для обратной совместимости
-        self.date_dir = self.scenario_dir
+        # date_dir будет установлен в _create_scenario_dir когда папка будет создана
+        if self.scenario_dir is not None:
+            self.date_dir = self.scenario_dir
+        else:
+            self.date_dir = None
         
         # Метаданные сессии
         self.session_start = datetime.now()
@@ -130,6 +134,8 @@ class LLMLogger:
             
             self.scenario_dir = self.logs_dir / self.date / folder_name
             self.scenario_dir.mkdir(parents=True, exist_ok=True)
+            # Устанавливаем date_dir для обратной совместимости
+            self.date_dir = self.scenario_dir
             logger.debug(f"📁 Создана папка логов: {self.scenario_dir}")
     
     def _write_file(self, filename: str, content: str, step_title: str, 

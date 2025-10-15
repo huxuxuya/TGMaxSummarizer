@@ -36,6 +36,14 @@ class DatabaseManager:
                 )
             """)
             
+            # Миграция: добавляем поле ollama_model в user_ai_preferences если его нет
+            try:
+                cursor.execute("ALTER TABLE user_ai_preferences ADD COLUMN ollama_model TEXT DEFAULT NULL")
+                logger.info("✅ Добавлено поле ollama_model в таблицу user_ai_preferences")
+            except sqlite3.OperationalError:
+                # Поле уже существует
+                pass
+            
             # Telegram группы
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS groups (
@@ -461,6 +469,7 @@ class DatabaseManager:
                 user_id INTEGER PRIMARY KEY,
                 default_provider TEXT DEFAULT 'gigachat',
                 preferred_providers TEXT DEFAULT '["gigachat"]',
+                ollama_model TEXT DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
@@ -512,7 +521,7 @@ class DatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_summaries_provider ON summaries(provider_name)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_openrouter_models_user ON user_openrouter_models(user_id)")
     
-    def add_user_ai_preference(self, user_id: int, default_provider: str = 'gigachat', preferred_providers: List[str] = None):
+    def add_user_ai_preference(self, user_id: int, default_provider: str = 'gigachat', preferred_providers: List[str] = None, ollama_model: str = None):
         """Добавить или обновить предпочтения AI провайдера пользователя"""
         if preferred_providers is None:
             preferred_providers = ['gigachat']
@@ -522,9 +531,9 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR REPLACE INTO user_ai_preferences 
-                (user_id, default_provider, preferred_providers, updated_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            """, (user_id, default_provider, json.dumps(preferred_providers)))
+                (user_id, default_provider, preferred_providers, ollama_model, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (user_id, default_provider, json.dumps(preferred_providers), ollama_model))
             conn.commit()
     
     def get_user_ai_preference(self, user_id: int) -> Optional[Dict]:
@@ -533,7 +542,7 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT default_provider, preferred_providers
+                SELECT default_provider, preferred_providers, ollama_model
                 FROM user_ai_preferences
                 WHERE user_id = ?
             """, (user_id,))
@@ -547,7 +556,8 @@ class DatabaseManager:
                 
                 return {
                     'default_provider': result[0] or 'gigachat',
-                    'preferred_providers': preferred_providers
+                    'preferred_providers': preferred_providers,
+                    'ollama_model': result[2] if len(result) > 2 else None
                 }
             return None
     

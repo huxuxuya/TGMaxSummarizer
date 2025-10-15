@@ -1,6 +1,7 @@
 # Чувствительные данные
 .env
 *.env
+.env*
 login_token.txt
 *.token
 *.key

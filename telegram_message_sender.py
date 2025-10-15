@@ -248,6 +248,27 @@ class TelegramMessageSender:
                 
                 logger.debug(f"Text for MarkdownV2:\n{formatted_text}")
                 
+                # Дополнительная отладка для поиска проблемных символов
+                logger.debug("=== EDIT_MESSAGE MARKDOWN_V2 DEBUG INFO ===")
+                logger.debug(f"Original text length: {len(text)}")
+                logger.debug(f"Formatted text length: {len(formatted_text)}")
+                logger.debug(f"Content type: {content_type}")
+                
+                # Проверяем на проблемные символы
+                problematic_chars = ['*', '_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+                for char in problematic_chars:
+                    count_orig = text.count(char)
+                    count_formatted = formatted_text.count(char)
+                    if count_orig > 0 or count_formatted > 0:
+                        logger.debug(f"Char '{char}': original={count_orig}, formatted={count_formatted}")
+                
+                # Проверяем на незакрытые теги
+                bold_count = formatted_text.count('*')
+                if bold_count % 2 != 0:
+                    logger.warning(f"⚠️ UNBALANCED BOLD TAGS: {bold_count} asterisks (should be even)")
+                
+                logger.debug("=== END EDIT_MESSAGE MARKDOWN_V2 DEBUG ===")
+                
                 await bot.send_message(
                     chat_id=chat_id,
                     text=formatted_text,

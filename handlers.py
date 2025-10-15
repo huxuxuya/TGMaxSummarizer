@@ -263,6 +263,9 @@ class BotHandlers:
         elif data.startswith("select_top5_model:"):
             model_id = data.split(":", 1)[1]
             await self.top5_model_info_handler(update, context, model_id)
+        # Ollama Model handlers
+        elif data.startswith("select_ollama_model:"):
+            await self.select_ollama_model_handler(update, context)
         elif data.startswith("confirm_top5_model:"):
             model_id = data.split(":", 1)[1]
             await self.confirm_top5_model_handler(update, context, model_id)
@@ -1789,6 +1792,11 @@ class BotHandlers:
                 await self.openrouter_model_selection_handler(update, context)
                 return
             
+            # Если выбран Ollama, показываем выбор моделей
+            if provider_name == 'ollama':
+                await self.ollama_model_selection_handler(update, context)
+                return
+            
             # Обновляем предпочтения пользователя
             self.db.add_user_ai_preference(user_id, provider_name)
             
@@ -2437,46 +2445,49 @@ class BotHandlers:
         await query.answer()
         
         try:
-            # Получаем Ollama провайдер
-            ollama_provider = self.analyzer.provider_factory.create_provider('ollama', self.analyzer.config)
-            if not ollama_provider:
-                await TelegramMessageSender.safe_edit_message_text(
+            # Показываем сообщение о загрузке
+            await TelegramMessageSender.safe_edit_message_text(
                 query,
-                    "❌ Ollama провайдер недоступен",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🔙 Назад", callback_data="select_model_for_analysis")
-                    ]])
-                )
-                return
+                "🔍 Получаем список доступных моделей Ollama...\n\n⏳ Это может занять несколько секунд.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Отмена", callback_data="select_model_for_analysis")
+                ]])
+            )
             
-            # Получаем доступные модели
-            available_models = await ollama_provider.get_available_models()
+            # Получаем список доступных моделей с сервера
+            available_models = await self.analyzer.get_available_ollama_models()
             
             if not available_models:
                 await TelegramMessageSender.safe_edit_message_text(
                 query,
                     "❌ Не удалось получить список моделей Ollama\n\n"
-                    "Убедитесь, что Ollama запущен и доступен.",
+                    "Возможные причины:\n"
+                    "• Сервер Ollama недоступен\n"
+                    "• Нет установленных моделей\n"
+                    "• Проблемы с сетью\n\n"
+                    "Проверьте, что Ollama запущен и доступен.",
                     reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔄 Попробовать снова", callback_data="analyze_with_provider:ollama"),
                         InlineKeyboardButton("🔙 Назад", callback_data="select_model_for_analysis")
                     ]])
                 )
                 return
             
             keyboard = []
-            # Преобразуем словарь в список для индексации
-            models_list = list(available_models.items())
-            for index, (model_id, model_info) in enumerate(models_list):
-                display_name = model_info.get('display_name', model_id)
-                size_mb = model_info.get('size', 0) / (1024 * 1024) if model_info.get('size') else 0
-                size_text = f" ({size_mb:.0f}MB)" if size_mb > 0 else ""
+            # Создаем кнопки для каждой модели
+            for index, model_name in enumerate(available_models):
+                # Ограничиваем длину названия модели для кнопки
+                display_name = model_name
+                if len(display_name) > 25:
+                    display_name = display_name[:22] + "..."
+                
                 keyboard.append([InlineKeyboardButton(
-                    f"🆓 {display_name}{size_text}",
+                    f"🆓 {display_name}",
                     callback_data=f"analyze_with_ollama_model_index:{index}"
                 )])
             
-            # Сохраняем полные model_id в контексте пользователя
-            context.user_data['ollama_models_list'] = models_list
+            # Сохраняем список моделей в контексте пользователя
+            context.user_data['ollama_models_list'] = [(model, {'display_name': model, 'name': model}) for model in available_models]
             
             # Определяем правильную кнопку "Назад" в зависимости от контекста
             date = context.user_data.get('selected_date')
@@ -2490,10 +2501,8 @@ class BotHandlers:
             text += "Эта модель будет использована только для текущего анализа.\n"
             text += "Ваши глобальные настройки не изменятся.\n\n"
             
-            for model_id, model_info in available_models.items():
-                size_mb = model_info.get('size', 0) / (1024 * 1024) if model_info.get('size') else 0
-                size_text = f" ({size_mb:.0f}MB)" if size_mb > 0 else ""
-                text += f"• **{model_info['display_name']}**{size_text}\n"
+            for model_name in available_models:
+                text += f"• **{model_name}**\n"
             
             await TelegramMessageSender.safe_edit_message_text(
                 query,
@@ -2835,9 +2844,15 @@ class BotHandlers:
             # Импортируем TextContentType для указания типа контента
             from telegram_formatter import TextContentType
             
+            # Обрабатываем ошибки Telegram API отдельно
+            error_message = str(e)
+            if "Can't parse entities" in error_message:
+                # Это ошибка форматирования Telegram - показываем общее сообщение
+                error_message = "Ошибка форматирования сообщения"
+            
             await TelegramMessageSender.safe_edit_message_text(
                 query,
-                f"❌ Ошибка анализа: {str(e)}",
+                f"❌ Ошибка анализа: {error_message}",
                 content_type=TextContentType.RAW,  # Экранирование произойдет автоматически
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Назад", callback_data=back_callback)
@@ -3141,5 +3156,103 @@ class BotHandlers:
                 f"❌ Ошибка: {str(e)}",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Назад", callback_data=back_callback)
+                ]])
+            )
+    
+    async def ollama_model_selection_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик выбора модели Ollama"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Показываем сообщение о загрузке
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                "🔍 Получаем список доступных моделей Ollama...\n\n⏳ Это может занять несколько секунд.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Отмена", callback_data="select_ai_provider")
+                ]])
+            )
+            
+            # Получаем список доступных моделей
+            available_models = await self.analyzer.get_available_ollama_models()
+            
+            if not available_models:
+                await TelegramMessageSender.safe_edit_message_text(
+                    query,
+                    "❌ Не удалось получить список моделей Ollama\n\n"
+                    "Возможные причины:\n"
+                    "• Сервер Ollama недоступен\n"
+                    "• Нет установленных моделей\n"
+                    "• Проблемы с сетью\n\n"
+                    "Проверьте, что Ollama запущен и доступен.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔄 Попробовать снова", callback_data="select_provider:ollama"),
+                        InlineKeyboardButton("🔙 Назад", callback_data="select_ai_provider")
+                    ]])
+                )
+                return
+            
+            # Получаем текущие предпочтения пользователя
+            user_id = update.effective_user.id
+            user_preferences = self.db.get_user_ai_preference(user_id)
+            current_model = user_preferences.get('ollama_model') if user_preferences else None
+            
+            # Создаем клавиатуру выбора моделей
+            from keyboards import ollama_model_selection_keyboard
+            keyboard = ollama_model_selection_keyboard(available_models, current_model)
+            
+            text = f"🤖 Выберите модель Ollama для суммаризации:\n\n"
+            text += f"📊 Найдено {len(available_models)} моделей\n\n"
+            text += "💡 Выбранная модель будет использоваться для анализа чатов."
+            
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                text,
+                reply_markup=keyboard
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка выбора модели Ollama: {e}")
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                f"❌ Ошибка получения списка моделей: {str(e)}\n\n"
+                "Попробуйте еще раз или выберите другой провайдер.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔄 Попробовать снова", callback_data="select_provider:ollama"),
+                    InlineKeyboardButton("🔙 Назад", callback_data="select_ai_provider")
+                ]])
+            )
+    
+    async def select_ollama_model_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик выбора конкретной модели Ollama"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            model_name = query.data.split(":")[1]
+            user_id = update.effective_user.id
+            
+            # Сохраняем выбранную модель и провайдер
+            self.db.add_user_ai_preference(user_id, 'ollama', ollama_model=model_name)
+            
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                f"✅ Выбрана модель: **{model_name}**\n\n"
+                f"🤖 Провайдер: Ollama\n\n"
+                f"Теперь при суммаризации будет использоваться эта модель.\n\n"
+                f"💡 Выбор модели не сохраняется - при следующем анализе нужно будет выбрать модель заново.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Назад к управлению чатами", callback_data="back_to_chat_management")
+                ]])
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка выбора модели Ollama: {e}")
+            await TelegramMessageSender.safe_edit_message_text(
+                query,
+                f"❌ Ошибка: {str(e)}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Назад", callback_data="select_provider:ollama")
                 ]])
             )

@@ -3,9 +3,16 @@
 Тестовый скрипт для сравнения сценариев суммаризации
 """
 import os
+
+# Устанавливаем переменные окружения ДО всех импортов!
+os.environ['OLLAMA_BASE_URL'] = 'http://192.168.1.75:11434'
+print(f"🔗 DEBUG: Устанавливаем OLLAMA_BASE_URL = {os.environ['OLLAMA_BASE_URL']}")
+
 import asyncio
 import logging
 import time
+import aiohttp
+import json
 from database import DatabaseManager
 from chat_analyzer import ChatAnalyzer
 
@@ -46,21 +53,52 @@ def format_duration(seconds: float) -> str:
         secs = seconds % 60
         return f"{hours}ч {minutes}м {secs:.1f}с"
 
+async def get_available_models(base_url: str) -> list:
+    """
+    Получить список доступных моделей с сервера Ollama
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{base_url}/api/tags", timeout=10) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    models = []
+                    for model_info in data.get('models', []):
+                        model_name = model_info.get('name', '')
+                        if model_name:
+                            models.append(model_name)
+                    return models
+                else:
+                    print(f"❌ Ошибка получения моделей: HTTP {response.status}")
+                    return []
+    except Exception as e:
+        print(f"❌ Ошибка подключения к Ollama: {e}")
+        return []
+
 async def main():
     print("🤖 Тестирование сценариев суммаризации\n")
     
-    # 1. Выбор модели
-    models = {
-        '1': 'deepseek-r1:8b',
-        '2': 'gemma3:12b',
-        '3': 'qwen3:8b'
-    }
+    # 1. Получение списка доступных моделей с сервера Ollama
+    base_url = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
+    print(f"🔍 Получаем список моделей с сервера {base_url}...")
     
-    print("Доступные модели Ollama:")
+    available_models = await get_available_models(base_url)
+    
+    if not available_models:
+        print("❌ Не удалось получить список моделей или сервер недоступен")
+        print("💡 Убедитесь, что Ollama запущен и доступен по адресу:", base_url)
+        return
+    
+    # Создаем словарь для выбора моделей
+    models = {}
+    for i, model in enumerate(available_models, 1):
+        models[str(i)] = model
+    
+    print(f"\n✅ Найдено {len(available_models)} моделей:")
     for key, model in models.items():
         print(f"  {key}. {model}")
     
-    choice = input("\nВыберите модель (1-3): ").strip()
+    choice = input(f"\nВыберите модель (1-{len(available_models)}): ").strip()
     model_name = models.get(choice)
     
     if not model_name:
@@ -113,7 +151,7 @@ async def main():
         print(f"📱 Используется VK чат: {vk_chat_id}")
         
         # Получаем сообщения за 13.10.2025
-        messages = db.get_messages_by_date(vk_chat_id, "2025-10-13")
+        messages = db.get_messages_by_date(vk_chat_id, "2025-10-15")
         
         if not messages:
             print("❌ Нет сообщений за 13.10.2025")
@@ -130,9 +168,14 @@ async def main():
     os.environ['TEST_MODEL_NAME'] = model_name
     os.environ['ENABLE_LLM_LOGGING'] = 'true'
     
-    # 5. Создаем анализатор
+    print(f"🔗 DEBUG: Переменная окружения OLLAMA_BASE_URL = {os.environ.get('OLLAMA_BASE_URL')}")
+    
+    # 5. Создаем анализатор с явной конфигурацией
     try:
-        analyzer = ChatAnalyzer()  # Используем конфигурацию по умолчанию
+        # Передаем конфигурацию явно, чтобы использовать обновленные переменные окружения
+        from config import AI_PROVIDERS
+        analyzer = ChatAnalyzer(AI_PROVIDERS)
+        print(f"🔗 DEBUG: ChatAnalyzer создан с конфигурацией: {analyzer.config.get('ollama', {}).get('base_url', 'НЕ НАЙДЕНО')}")
     except Exception as e:
         print(f"❌ Ошибка при создании анализатора: {e}")
         return

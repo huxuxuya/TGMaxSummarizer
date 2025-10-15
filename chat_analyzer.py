@@ -52,6 +52,10 @@ class ChatAnalyzer:
                     self.config['OPENROUTER_API_KEY'] = provider_config.get('api_key', '')
                 elif provider_name == 'gemini':
                     self.config['GEMINI_API_KEY'] = provider_config.get('api_key', '')
+                elif provider_name == 'ollama':
+                    # Для Ollama передаем всю конфигурацию
+                    self.config['ollama'] = provider_config
+                    logger.debug(f"🔗 DEBUG ChatAnalyzer: ollama config = {provider_config}")
         else:
             self.config = config
             
@@ -77,7 +81,11 @@ class ChatAnalyzer:
         try:
             # Выбираем провайдера
             if provider_name:
-                provider = self.provider_factory.create_provider(provider_name, self.config)
+                # Создаем провайдера с правильной конфигурацией
+                if provider_name == 'ollama' and 'ollama' in self.config:
+                    provider = self.provider_factory.create_provider(provider_name, self.config['ollama'])
+                else:
+                    provider = self.provider_factory.create_provider(provider_name, self.config)
                 if not provider:
                     logger.error(f"❌ Не удалось создать провайдер: {provider_name}")
                     return None
@@ -91,24 +99,36 @@ class ChatAnalyzer:
                     logger.error("❌ Нет доступных AI провайдеров")
                     return None
                 
-                provider = self.provider_factory.create_provider(best_provider_name, self.config)
+                # Создаем провайдера с правильной конфигурацией
+                if best_provider_name == 'ollama' and 'ollama' in self.config:
+                    provider = self.provider_factory.create_provider(best_provider_name, self.config['ollama'])
+                else:
+                    provider = self.provider_factory.create_provider(best_provider_name, self.config)
                 provider_name = best_provider_name
             
             # Инициализируем провайдера
             if not await provider.initialize():
                 logger.error(f"❌ Не удалось инициализировать провайдер: {provider_name}")
                 
-                # Пробуем fallback провайдеров
-                for fallback_name in FALLBACK_PROVIDERS:
-                    if fallback_name != provider_name:
-                        logger.info(f"🔄 Пробуем fallback провайдер: {fallback_name}")
-                        fallback_provider = self.provider_factory.create_provider(fallback_name, self.config)
-                        if fallback_provider and await fallback_provider.initialize():
-                            provider = fallback_provider
-                            provider_name = fallback_name
-                            break
+                # Пробуем fallback провайдеров (кроме Ollama)
+                if provider_name != 'ollama':
+                    for fallback_name in FALLBACK_PROVIDERS:
+                        if fallback_name != provider_name and fallback_name != 'ollama':
+                            logger.info(f"🔄 Пробуем fallback провайдер: {fallback_name}")
+                            # Создаем fallback провайдера с правильной конфигурацией
+                            if fallback_name == 'ollama' and 'ollama' in self.config:
+                                fallback_provider = self.provider_factory.create_provider(fallback_name, self.config['ollama'])
+                            else:
+                                fallback_provider = self.provider_factory.create_provider(fallback_name, self.config)
+                            if fallback_provider and await fallback_provider.initialize():
+                                provider = fallback_provider
+                                provider_name = fallback_name
+                                break
+                    else:
+                        logger.error("❌ Все провайдеры недоступны")
+                        return None
                 else:
-                    logger.error("❌ Все провайдеры недоступны")
+                    logger.error("❌ Ollama недоступен, fallback провайдеры не используются")
                     return None
             
             # Если это OpenRouter, устанавливаем выбранную пользователем модель
@@ -148,7 +168,11 @@ class ChatAnalyzer:
             available_providers = []
             
             for provider_name in self.provider_factory.get_available_providers():
-                provider = self.provider_factory.create_provider(provider_name, self.config)
+                # Создаем провайдера с правильной конфигурацией
+                if provider_name == 'ollama' and 'ollama' in self.config:
+                    provider = self.provider_factory.create_provider(provider_name, self.config['ollama'])
+                else:
+                    provider = self.provider_factory.create_provider(provider_name, self.config)
                 if provider:
                     is_available = await provider.is_available()
                     provider_info = provider.get_provider_info()
@@ -176,7 +200,11 @@ class ChatAnalyzer:
             providers = []
             
             for provider_name in self.provider_factory.get_available_providers():
-                provider = self.provider_factory.create_provider(provider_name, self.config)
+                # Создаем провайдера с правильной конфигурацией
+                if provider_name == 'ollama' and 'ollama' in self.config:
+                    provider = self.provider_factory.create_provider(provider_name, self.config['ollama'])
+                else:
+                    provider = self.provider_factory.create_provider(provider_name, self.config)
                 if provider:
                     provider_info = provider.get_provider_info()
                     provider_info['name'] = provider_name
@@ -212,7 +240,11 @@ class ChatAnalyzer:
             True если провайдер валиден и доступен, False иначе
         """
         try:
-            provider = self.provider_factory.create_provider(provider_name, self.config)
+            # Создаем провайдера с правильной конфигурацией
+            if provider_name == 'ollama' and 'ollama' in self.config:
+                provider = self.provider_factory.create_provider(provider_name, self.config['ollama'])
+            else:
+                provider = self.provider_factory.create_provider(provider_name, self.config)
             if not provider:
                 return False
             
@@ -449,8 +481,11 @@ class ChatAnalyzer:
                 llm_logger.set_session_info(provider_name, model_id, None, user_id)
                 logger.info(f"📁 LLM Logger создан: {llm_logger.get_logs_path()}")
             
-            # Создаем провайдера
-            provider = self.provider_factory.create_provider(provider_name, self.config)
+            # Создаем провайдера с правильной конфигурацией
+            if provider_name == 'ollama' and 'ollama' in self.config:
+                provider = self.provider_factory.create_provider(provider_name, self.config['ollama'])
+            else:
+                provider = self.provider_factory.create_provider(provider_name, self.config)
             if not provider:
                 logger.error(f"❌ Не удалось создать провайдер: {provider_name}")
                 return None
@@ -459,15 +494,15 @@ class ChatAnalyzer:
             if llm_logger:
                 provider.set_llm_logger(llm_logger)
             
+            # Если указана модель, устанавливаем её ДО инициализации провайдера
+            if model_id and hasattr(provider, 'set_model'):
+                provider.set_model(model_id)
+                logger.info(f"🔗 Установлена модель {provider_name}: {model_id}")
+            
             # Инициализируем провайдера
             if not await provider.initialize():
                 logger.error(f"❌ Не удалось инициализировать провайдер: {provider_name}")
                 return None
-            
-            # Если указана модель, устанавливаем её для соответствующего провайдера
-            if model_id and hasattr(provider, 'set_model'):
-                provider.set_model(model_id)
-                logger.info(f"🔗 Установлена модель {provider_name}: {model_id}")
             
             # Оптимизация и логирование теперь происходит в провайдерах
             
@@ -1054,7 +1089,7 @@ class ChatAnalyzer:
         """
         try:
             # Создаем словарь классификации для быстрого поиска
-            classification_dict = {item.get('message_id'): item.get('class') for item in classification}
+            classification_dict = {item.get('message_id', item.get('id')): item.get('class') for item in classification}
             
             # Фильтруем сообщения
             relevant_messages = []
@@ -1206,8 +1241,11 @@ class ChatAnalyzer:
             Результат структурированного анализа
         """
         try:
-            # Создаем провайдер
-            provider = self.provider_factory.create_provider(provider_name, self.config)
+            # Создаем провайдер с правильной конфигурацией
+            if provider_name == 'ollama' and 'ollama' in self.config:
+                provider = self.provider_factory.create_provider(provider_name, self.config['ollama'])
+            else:
+                provider = self.provider_factory.create_provider(provider_name, self.config)
             if not provider:
                 logger.error(f"❌ Не удалось создать провайдер {provider_name}")
                 return None
@@ -1296,3 +1334,37 @@ class ChatAnalyzer:
         except Exception as e:
             logger.warning(f"⚠️ Ошибка при очистке JSON ответа: {e}")
             return response
+    
+    async def get_available_ollama_models(self) -> List[str]:
+        """
+        Получить список доступных моделей с сервера Ollama
+        
+        Returns:
+            List[str]: Список имен доступных моделей
+        """
+        import aiohttp
+        
+        try:
+            # Получаем URL сервера Ollama из конфигурации
+            ollama_base_url = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{ollama_base_url}/api/tags", timeout=10) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        models = []
+                        for model_info in data.get('models', []):
+                            model_name = model_info.get('name', '')
+                            if model_name:
+                                models.append(model_name)
+                        logger.info(f"✅ Получено {len(models)} моделей Ollama")
+                        return models
+                    else:
+                        logger.error(f"❌ Ошибка получения моделей Ollama: HTTP {response.status}")
+                        return []
+        except aiohttp.ClientError as e:
+            logger.error(f"❌ Ошибка подключения к Ollama: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"❌ Неизвестная ошибка при получении моделей Ollama: {e}")
+            return []

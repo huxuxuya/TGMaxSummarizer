@@ -13,7 +13,11 @@ class OllamaProvider(BaseAIProvider):
         super().__init__(config)
         self.base_url = config.get('base_url', 'http://localhost:11434')
         self.model = config.get('model', 'deepseek-r1:8b')
-        self.timeout = config.get('timeout', 300)  # Увеличенный таймаут для локальных моделей (5 минут)
+        self.timeout = config.get('timeout', 60)  # Уменьшенный таймаут для удаленных моделей (1 минута)
+        
+        # Отладочная информация
+        self.logger.info(f"🔗 DEBUG: OllamaProvider инициализирован с base_url = {self.base_url}")
+        self.logger.info(f"🔗 DEBUG: OllamaProvider инициализирован с model = {self.model}")
     
     def set_model(self, model_name: str):
         """
@@ -87,12 +91,13 @@ class OllamaProvider(BaseAIProvider):
         Проверить доступность Ollama
         
         Returns:
-            True если Ollama доступен, False иначе
+            True если Ollama сервер доступен, False иначе
         """
         if not self.validate_config():
             return False
         
         try:
+            self.logger.info(f"🔗 DEBUG: Проверяем доступность Ollama по URL: {self.base_url}/api/tags")
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
                 # Проверяем доступность Ollama сервера
                 async with session.get(f"{self.base_url}/api/tags") as response:
@@ -100,12 +105,17 @@ class OllamaProvider(BaseAIProvider):
                         data = await response.json()
                         models = [model['name'] for model in data.get('models', [])]
                         
-                        # Проверяем, есть ли нужная модель
-                        if self.model in models:
-                            self.logger.info(f"✅ Ollama доступен, модель {self.model} найдена")
+                        # Для Ollama достаточно, что сервер доступен и есть хотя бы одна модель
+                        if models:
+                            self.logger.info(f"✅ Ollama доступен, найдено {len(models)} моделей")
+                            # Проверяем, есть ли нужная модель (для информации)
+                            if self.model in models:
+                                self.logger.info(f"✅ Модель по умолчанию {self.model} найдена")
+                            else:
+                                self.logger.info(f"ℹ️ Модель по умолчанию {self.model} не найдена, но есть другие модели")
                             return True
                         else:
-                            self.logger.warning(f"⚠️ Ollama доступен, но модель {self.model} не найдена. Доступные модели: {models}")
+                            self.logger.warning(f"⚠️ Ollama доступен, но нет установленных моделей")
                             return False
                     else:
                         self.logger.error(f"❌ Ollama недоступен, статус: {response.status}")
@@ -239,6 +249,7 @@ class OllamaProvider(BaseAIProvider):
                 prompt = PromptTemplates.get_summarization_prompt(text, 'ollama')
 
             self.logger.info(f"🔗 Отправляем запрос в Ollama")
+            self.logger.info(f"🔗 DEBUG: URL для запроса: {self.base_url}/api/generate")
             self.logger.info(f"📝 Длина текста: {len(text)} символов")
             self.logger.info(f"🤖 Модель: {self.model}")
             
@@ -247,21 +258,25 @@ class OllamaProvider(BaseAIProvider):
                 "prompt": prompt,
                 "stream": False,
                 "options": {
-                    "temperature": 0.7,
-                    "top_p": 0.9,
-                    "max_tokens": 2000 if is_generation else 1000
+                    "temperature": 0.7
                 }
             }
             
+            self.logger.info(f"🔗 DEBUG: Отправляем POST запрос с таймаутом {self.timeout}с")
+            self.logger.info(f"🔗 DEBUG: Payload: {payload}")
+            
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
+                self.logger.info(f"🔗 DEBUG: Создана сессия, отправляем запрос...")
                 async with session.post(
                     f"{self.base_url}/api/generate",
                     json=payload,
                     headers={"Content-Type": "application/json"}
                 ) as response:
+                    self.logger.info(f"🔗 DEBUG: Получен ответ со статусом {response.status}")
                     
                     if response.status == 200:
                         data = await response.json()
+                        self.logger.info(f"🔗 DEBUG: Получен JSON ответ от Ollama: {data}")
                         
                         if 'response' in data:
                             result = data['response'].strip()
@@ -269,10 +284,12 @@ class OllamaProvider(BaseAIProvider):
                             return result
                         else:
                             self.logger.error("❌ Неожиданный формат ответа от Ollama")
+                            self.logger.error(f"🔗 DEBUG: Ключи в ответе: {list(data.keys())}")
                             return None
                     else:
                         error_text = await response.text()
                         self.logger.error(f"❌ Ошибка Ollama API: {response.status} - {error_text}")
+                        self.logger.error(f"🔗 DEBUG: Полный ответ сервера: {error_text}")
                         return None
                         
         except aiohttp.ClientTimeout:
@@ -280,12 +297,16 @@ class OllamaProvider(BaseAIProvider):
             return None
         except aiohttp.ClientError as e:
             self.logger.error(f"❌ Ошибка подключения к Ollama: {e}")
+            self.logger.error(f"🔗 DEBUG: Тип ошибки: {type(e)}")
             return None
         except json.JSONDecodeError as e:
             self.logger.error(f"❌ Ошибка парсинга JSON от Ollama: {e}")
+            self.logger.error(f"🔗 DEBUG: Тип ошибки: {type(e)}")
             return None
         except Exception as e:
             self.logger.error(f"❌ Неожиданная ошибка Ollama: {e}")
+            self.logger.error(f"🔗 DEBUG: Тип ошибки: {type(e)}")
+            self.logger.error(f"🔗 DEBUG: Аргументы ошибки: {e.args}")
             return None
     
     async def get_available_models(self) -> Dict[str, Dict[str, Any]]:

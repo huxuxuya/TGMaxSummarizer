@@ -154,7 +154,8 @@ def ai_provider_selection_keyboard(available_providers: List[str], current_provi
         'gigachat': '🤖 GigaChat',
         'chatgpt': '🧠 ChatGPT',
         'openrouter': '🔗 OpenRouter',
-        'gemini': '💎 Gemini'
+        'gemini': '💎 Gemini',
+        'ollama': '🦙 Ollama'
     }
     
     # Создаем словарь статусов провайдеров
@@ -205,7 +206,8 @@ def ai_provider_defaults_keyboard(current_default: str = 'gigachat') -> InlineKe
         'gigachat': '🤖 GigaChat',
         'chatgpt': '🧠 ChatGPT', 
         'openrouter': '🔗 OpenRouter',
-        'gemini': '💎 Gemini'
+        'gemini': '💎 Gemini',
+        'ollama': '🦙 Ollama'
     }
     
     for provider, display_name in provider_display_names.items():
@@ -224,7 +226,8 @@ def confirm_ai_provider_change_keyboard(provider_name: str) -> InlineKeyboardMar
         'gigachat': 'GigaChat',
         'chatgpt': 'ChatGPT',
         'openrouter': 'OpenRouter', 
-        'gemini': 'Gemini'
+        'gemini': 'Gemini',
+        'ollama': 'Ollama'
     }
     
     display_name = provider_display_names.get(provider_name, provider_name.title())
@@ -335,4 +338,30 @@ def top5_model_info_keyboard(model_id: str, model_name: str) -> InlineKeyboardMa
         [InlineKeyboardButton("📋 Все модели OpenRouter", callback_data="openrouter_model_selection")],
         [InlineKeyboardButton("🔙 Назад к провайдерам", callback_data="select_ai_provider")]
     ]
+    return InlineKeyboardMarkup(buttons)
+
+def ollama_model_selection_keyboard(available_models: List[str], current_model: str = None) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для выбора модели Ollama"""
+    buttons = []
+    
+    for model_name in available_models:
+        # Определяем префикс в зависимости от текущего выбора
+        if model_name == current_model:
+            prefix = "✅ "
+        else:
+            prefix = "⚪ "
+        
+        # Ограничиваем длину названия модели для кнопки
+        display_name = model_name
+        if len(display_name) > 30:
+            display_name = display_name[:27] + "..."
+        
+        buttons.append([InlineKeyboardButton(
+            f"{prefix}{display_name}",
+            callback_data=f"select_ollama_model:{model_name}"
+        )])
+    
+    # Добавляем кнопку "Назад"
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="select_ai_provider")])
+    
     return InlineKeyboardMarkup(buttons)

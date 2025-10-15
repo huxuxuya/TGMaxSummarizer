@@ -59,6 +59,10 @@ AI_PROVIDERS = {
     }
 }
 
+# Отладочная информация для Ollama
+print(f"🔗 DEBUG config.py: OLLAMA_BASE_URL = {os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')}")
+print(f"🔗 DEBUG config.py: AI_PROVIDERS['ollama']['base_url'] = {AI_PROVIDERS['ollama']['base_url']}")
+
 # AI Provider Settings
 DEFAULT_AI_PROVIDER = os.getenv("DEFAULT_AI_PROVIDER", "ollama")
 FALLBACK_PROVIDERS = os.getenv("FALLBACK_PROVIDERS", "chatgpt,gemini").split(',')
