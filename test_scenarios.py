@@ -455,7 +455,7 @@ async def main():
         print(f"📱 Используется VK чат: {vk_chat_id}")
         
         # Получаем сообщения за 13.10.2025
-        messages = db.get_messages_by_date(vk_chat_id, "2025-10-15")
+        messages = db.get_messages_by_date(vk_chat_id, "2025-10-16")
         
         if not messages:
             print("❌ Нет сообщений за 13.10.2025")
