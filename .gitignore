@@ -16,6 +16,7 @@ login_token.txt
 *.log
 logs/
 llm_logs/
+telegram_messages/
 
 # Python
 __pycache__/

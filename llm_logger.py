@@ -9,6 +9,16 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+def _sanitize_path_component(name: str) -> str:
+    """Sanitize string for use in file path"""
+    if not name:
+        return "unknown"
+    # Replace invalid characters
+    sanitized = name.replace(":", "_").replace("/", "_").replace("\\", "_")
+    sanitized = sanitized.replace("<", "_").replace(">", "_").replace("|", "_")
+    sanitized = sanitized.replace("*", "_").replace("?", "_").replace('"', "_")
+    return sanitized
+
 class LLMLogger:
     """Класс для логирования всех этапов работы с LLM в текстовые файлы"""
     
@@ -34,13 +44,18 @@ class LLMLogger:
         
         # Создаем подпапку для сценария
         if test_mode and model_name and scenario:
+            # Sanitize model name for valid path
+            safe_model_name = _sanitize_path_component(model_name)
             # Тестовый режим: test_comparison/{model_name}/{scenario}/
-            self.scenario_dir = self.logs_dir / "test_comparison" / model_name / scenario
+            self.scenario_dir = self.logs_dir / "test_comparison" / safe_model_name / scenario
             # Очищаем папку если существует
             if self.scenario_dir.exists():
                 import shutil
                 shutil.rmtree(self.scenario_dir)
             self.scenario_dir.mkdir(parents=True, exist_ok=True)
+            # Verify directory was created
+            if not self.scenario_dir.exists() or not self.scenario_dir.is_dir():
+                raise RuntimeError(f"Failed to create log directory: {self.scenario_dir}")
         elif scenario:
             # Обычный режим с временной меткой (папка будет создана позже с учетом модели)
             self.scenario = scenario
@@ -49,6 +64,9 @@ class LLMLogger:
             # Обычный режим без сценария
             self.scenario_dir = self.logs_dir / self.date
             self.scenario_dir.mkdir(parents=True, exist_ok=True)
+            # Verify directory was created
+            if not self.scenario_dir.exists() or not self.scenario_dir.is_dir():
+                raise RuntimeError(f"Failed to create log directory: {self.scenario_dir}")
         
         # Сохраняем для обратной совместимости
         # date_dir будет установлен в _create_scenario_dir когда папка будет создана
@@ -60,7 +78,9 @@ class LLMLogger:
         # Метаданные сессии
         self.session_start = datetime.now()
         self.provider_name = None
-        self.model_name = None
+        # Save original model name for reference
+        self.original_model_name = model_name if (test_mode and model_name) else None
+        self.model_name = self.original_model_name  # Save original name
         self.chat_id = None
         self.user_id = None
         
@@ -127,7 +147,7 @@ class LLMLogger:
             # Формируем имя папки с учетом модели
             if self.model_name:
                 # Очищаем имя модели от недопустимых символов для имени папки
-                safe_model_name = self.model_name.replace(":", "_").replace("/", "_").replace("\\", "_")
+                safe_model_name = _sanitize_path_component(self.model_name)
                 folder_name = f"{self.scenario}_{safe_model_name}_{timestamp}"
             else:
                 folder_name = f"{self.scenario}_{timestamp}"
@@ -186,6 +206,9 @@ class LLMLogger:
             
         except Exception as e:
             logger.error(f"❌ Ошибка записи файла {filename}: {e}")
+            # Re-raise if directory doesn't exist - critical error
+            if not self.scenario_dir or not self.scenario_dir.exists():
+                raise RuntimeError(f"Log directory does not exist: {self.scenario_dir}") from e
     
     def log_formatted_messages(self, formatted_text: str, message_count: int = 0):
         """
@@ -828,3 +851,46 @@ class LLMLogger:
             
         except Exception as e:
             logger.error(f"❌ Ошибка записи ответа на сводку для родителей: {e}")
+    
+    def log_error(self, stage: str, error_message: str, exception_details: str = None):
+        """
+        Логирует ошибку на определённом этапе
+        
+        Args:
+            stage: Название этапа (classification, extraction, parent_summary и т.д.)
+            error_message: Сообщение об ошибке
+            exception_details: Детали исключения
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            
+            # Определяем имя файла в зависимости от этапа
+            stage_file_map = {
+                'classification': '99_classification_error.txt',
+                'extraction': '99_extraction_error.txt',
+                'parent_summary': '99_parent_summary_error.txt',
+                'summarization': '99_summarization_error.txt',
+                'reflection': '99_reflection_error.txt',
+                'improvement': '99_improvement_error.txt'
+            }
+            
+            filename = stage_file_map.get(stage, '99_error.txt')
+            log_file = self.scenario_dir / filename
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== ОШИБКА: {stage.upper()} ===\n")
+                f.write(f"Время: {timestamp}\n")
+                f.write(f"Провайдер: {self.provider_name}\n")
+                f.write(f"Модель: {self.model_name}\n")
+                f.write(f"Пользователь: {self.user_id}\n")
+                f.write(f"Чат: {self.chat_id}\n")
+                f.write(f"Этап: {stage}\n\n")
+                f.write(f"Сообщение об ошибке:\n{error_message}\n")
+                
+                if exception_details:
+                    f.write(f"\nДетали исключения:\n{exception_details}\n")
+            
+            logger.debug(f"📝 Ошибка записана: {filename}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи лога ошибки: {e}")

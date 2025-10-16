@@ -13,8 +13,228 @@ import logging
 import time
 import aiohttp
 import json
+import sys
+import select
+import tty
+import termios
 from database import DatabaseManager
 from chat_analyzer import ChatAnalyzer
+
+class ProgressChatAnalyzer(ChatAnalyzer):
+    """
+    Обертка над ChatAnalyzer для показа прогресса генерации
+    """
+    def __init__(self, config, show_generation=False, animation_speed=0.02):
+        super().__init__(config)
+        self.show_generation = show_generation
+        self.animation_speed = animation_speed
+    
+    async def analyze_chat_with_specific_model(self, messages, provider_name, model_id, user_id=None, 
+                                             enable_reflection=False, clean_data_first=False):
+        """
+        Анализ чата с показом прогресса
+        """
+        if not self.show_generation:
+            return await super().analyze_chat_with_specific_model(
+                messages, provider_name, model_id, user_id, enable_reflection, clean_data_first
+            )
+        
+        print_progress_stage("📊 Анализ чата", f"Модель: {model_id}")
+        
+        # Создаем LLM логгер для тестового режима
+        from llm_logger import LLMLogger
+        import os
+        
+        # Определяем сценарий
+        if clean_data_first:
+            scenario = "with_cleaning"
+        elif enable_reflection:
+            scenario = "with_reflection"
+        else:
+            scenario = "without_reflection"
+        
+        # Проверяем, есть ли в окружении флаг тестового режима
+        test_mode = os.environ.get('TEST_MODE') == 'true'
+        
+        # Создаем логгер
+        llm_logger = LLMLogger(
+            scenario=scenario,
+            model_name=model_id,
+            test_mode=test_mode
+        )
+        llm_logger.set_session_info(provider_name, model_id, None, user_id)
+        
+        # Получаем провайдер
+        if provider_name == 'ollama' and 'ollama' in self.config:
+            provider = self.provider_factory.create_provider(provider_name, self.config['ollama'])
+        else:
+            provider = self.provider_factory.create_provider(provider_name, self.config)
+        if not provider:
+            print("❌ Провайдер не найден")
+            return None
+        
+        # Устанавливаем модель
+        if hasattr(provider, 'set_model'):
+            provider.set_model(model_id)
+        
+        # Очистка данных
+        if clean_data_first:
+            print_progress_stage("🧹 Очистка данных", "Фильтрация сообщений...")
+            
+            # Создаем временный контекст для очистки
+            temp_chat_context = {
+                'total_messages': len(messages),
+                'date': messages[0].get('message_time', 0) if messages else 0,
+                'provider': provider_name,
+                'model': model_id
+            }
+            
+            messages = await self.clean_messages(provider, messages, temp_chat_context, llm_logger)
+            if not messages:
+                print("❌ Очистка данных не удалась или не осталось сообщений")
+                return None
+            print(f"✅ Очищено сообщений: {len(messages)}")
+        
+        # Суммаризация
+        print_progress_stage("📝 Суммаризация", "Генерация основного резюме...")
+        summary = await provider.summarize_chat(messages)
+        
+        if self.show_generation and summary:
+            print_with_animation(summary, "📝 Суммаризация", self.animation_speed)
+        
+        # Логируем результат
+        if llm_logger and summary:
+            llm_logger.log_raw_result(summary)
+            llm_logger.log_formatted_result(summary)
+            llm_logger.log_session_summary({
+                'summary': summary,
+                'messages_count': len(messages),
+                'model': model_id,
+                'provider': provider_name
+            })
+        
+        if not enable_reflection:
+            return summary
+        
+        # Рефлексия
+        print_progress_stage("🤔 Рефлексия", "Анализ качества суммаризации...")
+        reflection = await provider.generate_response(
+            f"Проанализируй качество этой суммаризации и предложи улучшения:\n\n{summary}"
+        )
+        
+        if self.show_generation and reflection:
+            print_with_animation(reflection, "🤔 Рефлексия", self.animation_speed)
+        
+        # Улучшение
+        print_progress_stage("✨ Улучшение", "Генерация улучшенной версии...")
+        improved = await provider.generate_response(
+            f"Улучши эту суммаризацию на основе анализа:\n\nСуммаризация:\n{summary}\n\nАнализ:\n{reflection}"
+        )
+        
+        if self.show_generation and improved:
+            print_with_animation(improved, "✨ Улучшение", self.animation_speed)
+        
+        return {
+            'summary': summary,
+            'reflection': reflection,
+            'improved': improved
+        }
+    
+    async def structured_analysis_with_specific_model(self, messages, provider_name, model_name, user_id):
+        """
+        Структурированный анализ с показом прогресса
+        """
+        if not self.show_generation:
+            return await super().structured_analysis_with_specific_model(
+                messages, provider_name, model_name, user_id
+            )
+        
+        print_progress_stage("🏗️ Структурированный анализ", f"Модель: {model_name}")
+        
+        # Создаем LLM Logger для логирования
+        import os
+        from llm_logger import LLMLogger
+        
+        test_mode = os.environ.get('TEST_MODE') == 'true'
+        llm_logger = LLMLogger(
+            scenario="structured_analysis",
+            model_name=model_name,
+            test_mode=test_mode
+        )
+        
+        # Устанавливаем метаданные сессии
+        llm_logger.set_session_info(provider_name, model_name, None, user_id)
+        
+        # Получаем провайдер
+        if provider_name == 'ollama' and 'ollama' in self.config:
+            provider = self.provider_factory.create_provider(provider_name, self.config['ollama'])
+        else:
+            provider = self.provider_factory.create_provider(provider_name, self.config)
+        if not provider:
+            print("❌ Провайдер не найден")
+            return None
+        
+        # Устанавливаем модель
+        if hasattr(provider, 'set_model'):
+            provider.set_model(model_name)
+        
+        # Классификация
+        print_progress_stage("🏷️ Классификация", "Анализ типов сообщений...")
+        
+        # Создаем callback для потоковой генерации
+        def classification_callback(chunk):
+            if self.show_generation:
+                print(chunk, end='', flush=True)
+        
+        classification = await self._classify_messages(provider, messages, llm_logger, stream_callback=classification_callback)
+        
+        if self.show_generation and classification:
+            print()  # Новая строка после анимации
+        
+        # Фильтрация релевантных сообщений - используем встроенный метод
+        relevant_messages = self._filter_by_classification(messages, classification)
+        
+        print(f"✅ Отфильтровано релевантных сообщений: {len(relevant_messages)} из {len(messages)}")
+        
+        # Экстракция слотов
+        print_progress_stage("🔍 Экстракция слотов", "Извлечение событий и фактов...")
+        
+        def extraction_callback(chunk):
+            if self.show_generation:
+                print(chunk, end='', flush=True)
+        
+        events = await self._extract_slots(provider, relevant_messages, classification, llm_logger, stream_callback=extraction_callback)
+        
+        if self.show_generation and events:
+            print()  # Новая строка после анимации
+        
+        # Генерация сводки для родителей
+        print_progress_stage("👨‍👩‍👧‍👦 Сводка для родителей", "Создание итогового отчета...")
+        
+        def summary_callback(chunk):
+            if self.show_generation:
+                print(chunk, end='', flush=True)
+        
+        summary = await self._generate_parent_summary(provider, events, llm_logger, stream_callback=summary_callback)
+        
+        if self.show_generation and summary:
+            print()  # Новая строка после анимации
+        
+        # Логируем финальные результаты
+        if llm_logger and summary:
+            llm_logger.log_raw_result(summary)
+            llm_logger.log_formatted_result(summary)
+            llm_logger.log_session_summary({
+                'summary': summary,
+                'events': events,
+                'classification': classification
+            })
+        
+        return {
+            'summary': summary,
+            'events': events,
+            'classification': classification
+        }
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -53,6 +273,76 @@ def format_duration(seconds: float) -> str:
         secs = seconds % 60
         return f"{hours}ч {minutes}м {secs:.1f}с"
 
+def print_with_animation(text: str, prefix: str = "🤖", delay: float = 0.02):
+    """
+    Выводить текст с анимацией печати
+    """
+    print(f"\n{prefix} Генерация:")
+    print("-" * 50)
+    
+    # Мгновенный режим
+    if delay == 0:
+        print(text)
+        print("-" * 50)
+        return
+    
+    print("💡 Нажмите любую клавишу для ускорения анимации")
+    print("-" * 50)
+    
+    # Проверяем, не слишком ли длинный текст для анимации
+    if len(text) > 1000 and delay > 0.01:
+        print("⚠️ Длинный текст, ускоряем анимацию...")
+        delay = min(delay, 0.01)
+    
+    for i, char in enumerate(text):
+        print(char, end='', flush=True)
+        
+        # Проверяем нажатие клавиши каждые 10 символов
+        if i % 10 == 0 and check_key_pressed():
+            key = get_key()
+            if key:
+                print(f"\n⚡ Анимация ускорена! (нажата клавиша: {repr(key)})")
+                delay = 0.001  # Ускоряем анимацию
+        
+        time.sleep(delay)
+    
+    print("\n" + "-" * 50)
+
+def print_progress_stage(stage: str, description: str = ""):
+    """
+    Выводить информацию о текущем этапе
+    """
+    print(f"\n🔄 {stage}")
+    if description:
+        print(f"   {description}")
+    print("-" * 30)
+
+def check_key_pressed():
+    """
+    Проверить, нажата ли клавиша (неблокирующая проверка)
+    """
+    try:
+        if sys.platform == 'win32':
+            import msvcrt
+            return msvcrt.kbhit()
+        else:
+            return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
+    except:
+        return False
+
+def get_key():
+    """
+    Получить нажатую клавишу
+    """
+    try:
+        if sys.platform == 'win32':
+            import msvcrt
+            return msvcrt.getch().decode('utf-8')
+        else:
+            return sys.stdin.read(1)
+    except:
+        return None
+
 async def get_available_models(base_url: str) -> list:
     """
     Получить список доступных моделей с сервера Ollama
@@ -76,7 +366,12 @@ async def get_available_models(base_url: str) -> list:
         return []
 
 async def main():
-    print("🤖 Тестирование сценариев суммаризации\n")
+    print("🤖 Тестирование сценариев суммаризации")
+    print("✨ Возможности:")
+    print("   • Показ генерируемого текста в реальном времени (включен по умолчанию)")
+    print("   • Максимально быстрый вывод без задержек")
+    print("   • Потоковая генерация от Ollama API")
+    print("   • Подробный прогресс по этапам\n")
     
     # 1. Получение списка доступных моделей с сервера Ollama
     base_url = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
@@ -122,6 +417,15 @@ async def main():
         return
     
     print(f"\n✅ Выбран сценарий: {scenario_choice}\n")
+    
+    # 2.5. Настройка отображения (включено по умолчанию)
+    show_generation = True  # Всегда включено
+    animation_speed = 0.02  # Нормальная скорость
+    
+    print("✅ Показ генерируемого текста включен по умолчанию")
+    print(f"✅ Скорость анимации: {animation_speed}s на символ (нормально)")
+    
+    print()
     
     # 3. Получение данных из БД
     try:
@@ -174,8 +478,9 @@ async def main():
     try:
         # Передаем конфигурацию явно, чтобы использовать обновленные переменные окружения
         from config import AI_PROVIDERS
-        analyzer = ChatAnalyzer(AI_PROVIDERS)
-        print(f"🔗 DEBUG: ChatAnalyzer создан с конфигурацией: {analyzer.config.get('ollama', {}).get('base_url', 'НЕ НАЙДЕНО')}")
+        analyzer = ProgressChatAnalyzer(AI_PROVIDERS, show_generation=show_generation, animation_speed=animation_speed)
+        print(f"🔗 DEBUG: ProgressChatAnalyzer создан с конфигурацией: {analyzer.config.get('ollama', {}).get('base_url', 'НЕ НАЙДЕНО')}")
+        print(f"🔗 DEBUG: Показ генерации: {'включен' if show_generation else 'отключен'}")
     except Exception as e:
         print(f"❌ Ошибка при создании анализатора: {e}")
         return
@@ -307,17 +612,19 @@ async def main():
     print("✅ Тестирование завершено!")
     print(f"📁 Результаты: llm_logs/test_comparison/{model_name}/")
     
-    if scenario_choice == '4':
+    if scenario_choice == '5':
         print("\nВсе сценарии:")
         print("  1. 1_without_reflection/ - быстрая суммаризация")
         print("  2. 2_with_reflection/ - с рефлексией и улучшением")
         print("  3. 3_with_cleaning/ - с предварительной очисткой")
+        print("  4. 4_structured_analysis/ - структурированный анализ")
     else:
         # Показываем только запущенный сценарий
         scenario_info = {
             '1': ("1_without_reflection", "быстрая суммаризация"),
             '2': ("2_with_reflection", "с рефлексией и улучшением"),
-            '3': ("3_with_cleaning", "с предварительной очисткой")
+            '3': ("3_with_cleaning", "с предварительной очисткой"),
+            '4': ("4_structured_analysis", "структурированный анализ")
         }
         scenario_name, description = scenario_info[scenario_choice]
         print(f"\nЗапущенный сценарий:")

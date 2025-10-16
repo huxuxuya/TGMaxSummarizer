@@ -88,29 +88,14 @@ def format_chat_stats(stats: Dict) -> str:
     
     return text
 
-def escape_markdown_v2(text: str) -> str:
-    """Экранировать символы для MarkdownV2 в Telegram"""
-    import re
-    
-    # Символы, которые нужно экранировать для MarkdownV2, исключая те, что используются для форматирования
-    escape_chars = r'[]()~`>#+-=|{}.!'
-    
-    # Используем регулярное выражение для экранирования, но исключаем экранирование точек в обычном тексте
-    escaped_text = re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
-    
-    # Специальная обработка для точек только в начале строк, если они выглядят как часть нумерованного списка
-    lines = escaped_text.split('\n')
-    for i, line in enumerate(lines):
-        if line.strip() and re.match(r'^\s*\d+\.', line):
-            lines[i] = re.sub(r'(\d+)\.', r'\1\\.', line, 1)
-    return '\n'.join(lines)
+# DEPRECATED: escape_markdown_v2() удалена - используйте telegramify-markdown
 
 def format_summary_for_telegram(summary: str, date: str = None, chat_name: str = None) -> List[str]:
-    """Форматировать суммаризацию для отправки в Telegram с MarkdownV2 разметкой"""
-    # Сначала форматируем суммаризацию для MarkdownV2
-    formatted_summary = format_summary_markdown_v2(summary)
+    """Форматировать суммаризацию для отправки в Telegram используя telegramify-markdown"""
+    from telegram_message_sender import TelegramMessageSender
+    from telegram_formatter import TelegramFormatter
     
-    # Добавляем заголовок с датой, днем недели и названием чата
+    # Добавляем заголовок с датой, днем недели и названием чата в стандартном Markdown
     if date:
         from datetime import datetime
         try:
@@ -122,78 +107,34 @@ def format_summary_for_telegram(summary: str, date: str = None, chat_name: str =
             # Форматируем дату для отображения
             formatted_date = date_obj.strftime('%d.%m.%Y')
             
-            # Формируем компактный заголовок
+            # Формируем компактный заголовок в стандартном Markdown
             if chat_name:
-                header = f"📱 *{chat_name}* • {formatted_date}, {weekday}\n\n"
+                header = f"📱 **{chat_name}** • {formatted_date}, {weekday}\n\n"
             else:
-                header = f"📋 *Информация от {formatted_date}, {weekday}*\n\n"
+                header = f"📋 **Информация от {formatted_date}, {weekday}**\n\n"
         except:
             if chat_name:
-                header = f"📱 *{chat_name}* • {date}\n\n"
+                header = f"📱 **{chat_name}** • {date}\n\n"
             else:
-                header = f"📋 *Информация от {date}*\n\n"
+                header = f"📋 **Информация от {date}**\n\n"
     else:
         if chat_name:
-            header = f"📱 *{chat_name}*\n\n"
+            header = f"📱 **{chat_name}**\n\n"
         else:
-            header = "📋 *Информация для ознакомления*\n\n"
+            header = "📋 **Информация для ознакомления**\n\n"
     
-    # Комбинируем заголовок и текст без дополнительного экранирования
-    final_text = header + formatted_summary
+    # Комбинируем заголовок и текст в стандартном Markdown
+    final_text = header + summary
+    
+    # Конвертируем в Telegram MarkdownV2 через telegramify-markdown
+    telegram_text = TelegramMessageSender.convert_standard_markdown_to_telegram(final_text)
     
     # Разбиваем на части
-    parts = format_message_for_telegram(final_text)
+    parts = TelegramFormatter.split_message(telegram_text)
     
     return parts
 
-def format_summary_markdown_v2(summary: str) -> str:
-    """Форматировать суммаризацию для MarkdownV2 в Telegram"""
-    lines = summary.split('\n')
-    formatted_lines = []
-    
-    for line in lines:
-        original_line = line
-        line_stripped = line.strip()
-        
-        # Обрабатываем заголовки секций - конвертируем в жирный текст для MarkdownV2
-        if line_stripped.startswith('## 🚨 ТРЕБУЕТ ДЕЙСТВИЙ:'):
-            formatted_lines.append('*🚨 ТРЕБУЕТ ДЕЙСТВИЙ:*')
-        elif line_stripped.startswith('## 📋 НОВЫЕ ПРАВИЛА:'):
-            formatted_lines.append('*📋 НОВЫЕ ПРАВИЛА:*')
-        elif line_stripped.startswith('## 📅 МЕРОПРИЯТИЯ:'):
-            formatted_lines.append('*📅 МЕРОПРИЯТИЯ:*')
-        elif line_stripped.startswith('## ⚠️ ПРОБЛЕМЫ:'):
-            formatted_lines.append('*⚠️ ПРОБЛЕМЫ:*')
-        # Обрабатываем другие заголовки ## - конвертируем в жирный текст
-        elif line_stripped.startswith('## '):
-            header_text = line_stripped[3:].strip()  # Убираем ##
-            formatted_lines.append(f'*{header_text}*')
-        # Обрабатываем элементы списка с сохранением отступов
-        elif line_stripped.startswith('- '):
-            # Подсчитываем количество пробелов в начале строки для отступа
-            indent_count = len(line) - len(line.lstrip())
-            indent_spaces = ' ' * indent_count
-            
-            item_text = line_stripped[2:].strip()
-            if item_text:
-                # Конвертируем **жирный** в *жирный* для MarkdownV2
-                item_text = item_text.replace('**', '*')
-                # Сохраняем отступ и добавляем маркер списка
-                formatted_lines.append(f"{indent_spaces}• {item_text}")
-        # Обрабатываем пустые строки
-        elif not line_stripped:
-            formatted_lines.append('')
-        # Обычный текст - конвертируем ** в * для MarkdownV2, сохраняя отступы
-        else:
-            if original_line:
-                # Конвертируем **жирный** в *жирный* для MarkdownV2
-                converted_line = original_line.replace('**', '*')
-                formatted_lines.append(converted_line)
-    
-    # Экранируем специальные символы для MarkdownV2
-    from telegram_formatter import TelegramFormatter
-    result = '\n'.join(formatted_lines)
-    return TelegramFormatter.escape_markdown_v2(result)
+# DEPRECATED: format_summary_markdown_v2() удалена - используйте telegramify-markdown
 
 def validate_chat_id(chat_id: str) -> bool:
     """Проверить валидность ID чата"""

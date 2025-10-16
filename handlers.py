@@ -8,7 +8,7 @@ from typing import Dict, Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
-from telegram_formatter import TelegramFormatter
+from telegram_formatter import TelegramFormatter, TextContentType
 from telegram_message_sender import TelegramMessageSender
 
 # Используем новый TelegramMessageSender вместо старой функции
@@ -52,9 +52,12 @@ class BotHandlers:
         user_groups = self.db.get_user_groups(user.id)
         
         if not user_groups:
-            await update.message.reply_text(
+            await TelegramMessageSender.safe_send_message(
+                context.bot,
+                update.effective_chat.id,
                 "👋 Добро пожаловать!\n\n"
-                "Для работы с ботом добавьте его в группу и сделайте администратором."
+                "Для работы с ботом добавьте его в группу и сделайте администратором.",
+                content_type=TextContentType.FORMATTED
             )
             return
         
@@ -64,18 +67,24 @@ class BotHandlers:
             context.user_data['selected_group_id'] = group_id
             
             keyboard = chat_management_keyboard()
-            await update.message.reply_text(
+            await TelegramMessageSender.safe_send_message(
+                context.bot,
+                update.effective_chat.id,
                 f"👋 Добро пожаловать!\n\n"
                 f"✅ Выбрана группа: {user_groups[0]['group_name']}\n\n"
                 f"📊 Управление чатами VK MAX",
+                content_type=TextContentType.FORMATTED,
                 reply_markup=keyboard
             )
         else:
             # Показываем выбор группы
             keyboard = group_selection_keyboard(user_groups)
-            await update.message.reply_text(
+            await TelegramMessageSender.safe_send_message(
+                context.bot,
+                update.effective_chat.id,
                 "👋 Добро пожаловать!\n\n"
                 "Выберите группу для работы:",
+                content_type=TextContentType.FORMATTED,
                 reply_markup=keyboard
             )
     
@@ -90,9 +99,12 @@ class BotHandlers:
         # Добавляем пользователя в группу как админа
         self.db.add_group_user(chat.id, user.id, is_admin=True)
         
-        await update.message.reply_text(
+        await TelegramMessageSender.safe_send_message(
+            context.bot,
+            update.effective_chat.id,
             f"✅ Бот добавлен в группу '{chat.title}'\n\n"
-            "Теперь вы можете управлять чатами VK MAX через этого бота."
+            "Теперь вы можете управлять чатами VK MAX через этого бота.",
+            content_type=TextContentType.FORMATTED
         )
     
     async def callback_query_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -284,6 +296,23 @@ class BotHandlers:
             await self.analyze_with_openrouter_model_index_handler(update, context)
         elif data.startswith("analyze_with_ollama_model_index:"):
             await self.analyze_with_ollama_model_index_handler(update, context)
+        # Missing handlers for orphaned buttons
+        elif data == "remove_chat":
+            await self._handle_remove_chat(update, context)
+        elif data == "chat_settings":
+            await self._handle_chat_settings_menu(update, context)
+        elif data == "back_to_chat_management":
+            await self._handle_back_to_manage_chats(update, context)
+        elif data == "back_to_settings":
+            await self._handle_settings(update, context)
+        elif data == "cancel_provider_change":
+            await self.ai_provider_selection_handler(update, context)
+        elif data.startswith("confirm_remove_chat_"):
+            chat_id = data.split("_")[3]
+            await self._handle_confirm_remove_chat(update, context, chat_id)
+        elif data.startswith("final_remove_chat_"):
+            chat_id = data.split("_")[3]
+            await self._handle_final_remove_chat(update, context, chat_id)
     
     async def _handle_manage_chats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка управления чатами"""
@@ -319,20 +348,26 @@ class BotHandlers:
     
     async def _handle_statistics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка статистики"""
+        # Создаем клавиатуру с правильной кнопкой "Назад"
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+        
         await TelegramMessageSender.safe_edit_message_text(
                 update.callback_query,
             "📈 Статистика\n\n"
             "Функция в разработке...",
-            reply_markup=back_keyboard()
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
     
     async def _handle_settings(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка настроек"""
+        # Создаем клавиатуру с правильной кнопкой "Назад"
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+        
         await TelegramMessageSender.safe_edit_message_text(
                 update.callback_query,
             "🔧 Настройки\n\n"
             "Функция в разработке...",
-            reply_markup=back_keyboard()
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
     
     async def _handle_group_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE, group_id: int):
@@ -1025,6 +1060,7 @@ class BotHandlers:
                                 bot=context.bot,
                                 chat_id=group_id,
                                 text=part,
+                                content_type=TextContentType.STANDARD_MARKDOWN,
                                 parse_mode=ParseMode.MARKDOWN_V2,
                                 disable_notification=True,
                                 disable_web_page_preview=True
@@ -1225,28 +1261,36 @@ class BotHandlers:
                     
                     # Отправляем напрямую с HTML парсингом
                     try:
-                        message = await context.bot.send_message(
-                            chat_id=group_id,
-                            text=part,
+                        success = await TelegramMessageSender.safe_send_message(
+                            context.bot,
+                            group_id,
+                            part,
+                            content_type=TextContentType.FORMATTED,
                             parse_mode=ParseMode.HTML,
                             disable_notification=True,
                             disable_web_page_preview=True
                         )
-                        sent_message_ids.append(message.message_id)
-                        logger.info(f"✅ Отправлено HTML сообщение {i+1} (ID: {message.message_id})")
+                        if success:
+                            # ID сообщения будет в логе, но для совместимости добавляем фиктивный ID
+                            sent_message_ids.append(i + 1)
+                            logger.info(f"✅ Отправлено HTML сообщение {i+1}")
                     except Exception as e:
                         logger.error(f"❌ Ошибка отправки HTML сообщения {i+1}: {e}")
                         if "can't parse entities" in str(e).lower():
                             # Fallback to plain text
                             logger.warning(f"🔄 Fallback: отправляем как plain text")
-                            message = await context.bot.send_message(
-                                chat_id=group_id,
-                                text=part,
+                            success = await TelegramMessageSender.safe_send_message(
+                                context.bot,
+                                group_id,
+                                part,
+                                content_type=TextContentType.RAW,
+                                parse_mode=None,
                                 disable_notification=True,
                                 disable_web_page_preview=True
                             )
-                            sent_message_ids.append(message.message_id)
-                            logger.info(f"✅ Отправлено HTML сообщение {i+1} (ID: {message.message_id}) в plain text")
+                            if success:
+                                sent_message_ids.append(i + 1)
+                                logger.info(f"✅ Отправлено HTML сообщение {i+1} в plain text")
                         else:
                             raise e
                     
@@ -1377,13 +1421,147 @@ class BotHandlers:
             reply_markup=keyboard
         )
     
+    async def _handle_remove_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка удаления чата"""
+        group_id = context.user_data.get('selected_group_id')
+        if not group_id:
+            await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                "❌ Группа не выбрана",
+                reply_markup=back_keyboard()
+            )
+            return
+        
+        # Получаем список чатов для удаления
+        chats = self.db.get_group_vk_chats(group_id)
+        if not chats:
+            await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                "📋 Нет чатов для удаления",
+                reply_markup=chat_management_keyboard()
+            )
+            return
+        
+        # Создаем клавиатуру с чатами для удаления
+        keyboard = []
+        for chat in chats:
+            keyboard.append([InlineKeyboardButton(
+                f"🗑️ {chat['chat_name']}",
+                callback_data=f"confirm_remove_chat_{chat['chat_id']}"
+            )])
+        
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_manage_chats")])
+        
+        await TelegramMessageSender.safe_edit_message_text(
+            update.callback_query,
+            "🗑️ Выберите чат для удаления:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    async def _handle_chat_settings_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка меню настроек чата"""
+        group_id = context.user_data.get('selected_group_id')
+        if not group_id:
+            await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                "❌ Группа не выбрана",
+                reply_markup=back_keyboard()
+            )
+            return
+        
+        # Получаем список чатов для настройки
+        chats = self.db.get_group_vk_chats(group_id)
+        if not chats:
+            await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                "📋 Нет чатов для настройки",
+                reply_markup=chat_management_keyboard()
+            )
+            return
+        
+        # Создаем клавиатуру с чатами для настройки
+        keyboard = []
+        for chat in chats:
+            keyboard.append([InlineKeyboardButton(
+                f"⚙️ {chat['chat_name']}",
+                callback_data=f"select_chat_{chat['chat_id']}"
+            )])
+        
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_manage_chats")])
+        
+        await TelegramMessageSender.safe_edit_message_text(
+            update.callback_query,
+            "⚙️ Выберите чат для настройки:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    async def _handle_confirm_remove_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: str):
+        """Обработка подтверждения удаления чата"""
+        # Получаем информацию о чате
+        chat_info = self.db.get_chat_info(chat_id)
+        if not chat_info:
+            await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                "❌ Чат не найден",
+                reply_markup=chat_management_keyboard()
+            )
+            return
+        
+        # Показываем подтверждение
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Да, удалить", callback_data=f"final_remove_chat_{chat_id}"),
+                InlineKeyboardButton("❌ Отмена", callback_data="remove_chat")
+            ]
+        ]
+        
+        await TelegramMessageSender.safe_edit_message_text(
+            update.callback_query,
+            f"⚠️ Вы уверены, что хотите удалить чат '{chat_info['chat_name']}'?\n\n"
+            f"Это действие нельзя отменить!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    async def _handle_final_remove_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: str):
+        """Обработка финального удаления чата"""
+        try:
+            # Получаем информацию о чате перед удалением
+            chat_info = self.db.get_chat_info(chat_id)
+            chat_name = chat_info['chat_name'] if chat_info else "Неизвестный чат"
+            
+            # Удаляем чат из базы данных
+            success = self.db.remove_chat(chat_id)
+            
+            if success:
+                await TelegramMessageSender.safe_edit_message_text(
+                    update.callback_query,
+                    f"✅ Чат '{chat_name}' успешно удален",
+                    reply_markup=chat_management_keyboard()
+                )
+            else:
+                await TelegramMessageSender.safe_edit_message_text(
+                    update.callback_query,
+                    f"❌ Ошибка при удалении чата '{chat_name}'",
+                    reply_markup=chat_management_keyboard()
+                )
+        except Exception as e:
+            logger.error(f"Ошибка при удалении чата {chat_id}: {e}")
+            await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                "❌ Произошла ошибка при удалении чата",
+                reply_markup=chat_management_keyboard()
+            )
+    
     async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик текстовых сообщений"""
         if context.user_data.get('waiting_for_chat_id'):
             await self._handle_chat_id_input(update, context)
         else:
-            await update.message.reply_text(
-                "Используйте кнопки для навигации или команду /start"
+            await TelegramMessageSender.safe_send_message(
+                context.bot,
+                update.effective_chat.id,
+                "Используйте кнопки для навигации или команду /start",
+                content_type=TextContentType.FORMATTED
             )
     
     async def _handle_chat_id_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1393,8 +1571,11 @@ class BotHandlers:
         group_id = context.user_data.get('selected_group_id')
         
         if not group_id:
-            await update.message.reply_text(
+            await TelegramMessageSender.safe_send_message(
+                context.bot,
+                update.effective_chat.id,
                 "❌ Группа не выбрана",
+                content_type=TextContentType.FORMATTED,
                 reply_markup=back_keyboard()
             )
             return
@@ -1402,8 +1583,11 @@ class BotHandlers:
         try:
             # Проверяем доступ к чату
             if not await self.vk.connect():
-                await update.message.reply_text(
+                await TelegramMessageSender.safe_send_message(
+                    context.bot,
+                    update.effective_chat.id,
                     "❌ Ошибка подключения к VK MAX",
+                    content_type=TextContentType.FORMATTED,
                     reply_markup=back_keyboard()
                 )
                 return
@@ -1412,8 +1596,11 @@ class BotHandlers:
             await self.vk.disconnect()
             
             if not chat_info:
-                await update.message.reply_text(
+                await TelegramMessageSender.safe_send_message(
+                    context.bot,
+                    update.effective_chat.id,
                     f"❌ Чат {chat_id} не найден или недоступен",
+                    content_type=TextContentType.FORMATTED,
                     reply_markup=back_keyboard()
                 )
                 return
@@ -1422,15 +1609,21 @@ class BotHandlers:
             self.db.add_vk_chat(chat_id, chat_info['title'], chat_info['type'])
             self.db.add_group_vk_chat(group_id, chat_id, user.id)
             
-            await update.message.reply_text(
+            await TelegramMessageSender.safe_send_message(
+                context.bot,
+                update.effective_chat.id,
                 f"✅ Чат '{chat_info['title']}' добавлен",
+                content_type=TextContentType.FORMATTED,
                 reply_markup=chat_management_keyboard()
             )
             
         except Exception as e:
             logger.error(f"Ошибка добавления чата: {e}")
-            await update.message.reply_text(
+            await TelegramMessageSender.safe_send_message(
+                context.bot,
+                update.effective_chat.id,
                 f"❌ Ошибка: {str(e)}",
+                content_type=TextContentType.FORMATTED,
                 reply_markup=back_keyboard()
             )
         finally:
@@ -2740,12 +2933,12 @@ class BotHandlers:
                 
                 # Форматируем результат анализа
                 if isinstance(summary, dict):
-                    # Используем новое форматирование с тремя разделами
+                    # Используем новое форматирование с тремя разделами в стандартном Markdown
                     formatted_result = TelegramFormatter.format_analysis_result_with_reflection(summary, ParseMode.MARKDOWN_V2)
                     text += formatted_result
                 else:
-                    # Старый формат - просто текст
-                    text += f"📝 *Резюме:*\n{display_text}"
+                    # Старый формат - просто текст в стандартном Markdown
+                    text += f"**📝 Резюме:**\n{display_text}"
                 
                 # Логируем финальный отформатированный текст для Telegram
                 try:
@@ -2785,8 +2978,11 @@ class BotHandlers:
                     
                     # Отправляем остальные части как новые сообщения
                     for i, part in enumerate(message_parts[1:], 1):
-                        await query.message.reply_text(
+                        await TelegramMessageSender.safe_send_message(
+                            context.bot,
+                            query.message.chat_id,
                             part,
+                            content_type=TextContentType.STANDARD_MARKDOWN,
                             parse_mode=ParseMode.MARKDOWN_V2
                         )
                     
@@ -2815,6 +3011,7 @@ class BotHandlers:
                 await TelegramMessageSender.safe_edit_message_text(
                     query,
                     text,
+                    content_type=TextContentType.STANDARD_MARKDOWN,
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
             else:
@@ -2841,8 +3038,7 @@ class BotHandlers:
             else:
                 back_callback = "back_to_chat_settings"
             
-            # Импортируем TextContentType для указания типа контента
-            from telegram_formatter import TextContentType
+            # TextContentType уже импортирован в начале файла
             
             # Обрабатываем ошибки Telegram API отдельно
             error_message = str(e)

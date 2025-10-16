@@ -52,7 +52,7 @@ AI_PROVIDERS = {
     'ollama': {
         'base_url': os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         'model': os.getenv("OLLAMA_MODEL", "deepseek-r1:8b"),
-        'timeout': int(os.getenv("OLLAMA_TIMEOUT", "120")),
+        'timeout': int(os.getenv("OLLAMA_TIMEOUT", "600")),
         'enabled': True,
         'display_name': 'Ollama (DeepSeek R1)',
         'description': 'Локальная модель deepseek-r1:8b через Ollama'

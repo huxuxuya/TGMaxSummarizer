@@ -461,6 +461,27 @@ class DatabaseManager:
             """, (group_id, vk_chat_id, date))
             conn.commit()
     
+    def remove_chat(self, vk_chat_id: str) -> bool:
+        """Удалить чат из базы данных"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                # Удаляем из связующей таблицы
+                cursor.execute("""
+                    DELETE FROM group_vk_chats
+                    WHERE vk_chat_id = ?
+                """, (vk_chat_id,))
+                # Удаляем сам чат
+                cursor.execute("""
+                    DELETE FROM vk_chats
+                    WHERE chat_id = ?
+                """, (vk_chat_id,))
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Ошибка при удалении чата {vk_chat_id}: {e}")
+            return False
+    
     def _create_ai_provider_tables(self, cursor):
         """Создать таблицы для AI провайдеров"""
         # Пользовательские предпочтения AI провайдеров

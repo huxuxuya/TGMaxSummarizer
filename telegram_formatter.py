@@ -26,6 +26,12 @@ class TextContentType(Enum):
     
     TECHNICAL = "technical"
     """Технический текст (имена переменных, коды ошибок). Будет обернут в backticks."""
+    
+    STANDARD_MARKDOWN = "standard_markdown"
+    """Стандартный Markdown текст. Будет конвертирован в Telegram MarkdownV2 через telegramify-markdown."""
+    
+    HTML = "html"
+    """HTML текст. Будет конвертирован в Telegram MarkdownV2."""
 
 class TelegramFormatter:
     """Класс для безопасного форматирования текста для Telegram"""
@@ -512,7 +518,8 @@ class TelegramFormatter:
             parse_mode: Режим парсинга (markdown_v2, markdown, html)
             
         Returns:
-            Отформатированный текст с тремя разделами
+            Отформатированный текст с тремя разделами в стандартном Markdown
+            (для markdown_v2 будет конвертирован через telegramify-markdown в handlers)
         """
         # Конвертируем ParseMode в строку для внутреннего использования
         parse_mode_str = TelegramFormatter._parse_mode_to_string(parse_mode)
@@ -526,34 +533,18 @@ class TelegramFormatter:
         reflection = analysis_result.get('reflection', '')
         improved_summary = analysis_result.get('improved', '')
         
-        # Формируем заголовки
-        if parse_mode_str == "markdown_v2":
-            header1 = "*📝 Первый ответ модели:*"
-            header2 = "*🤔 Результат рефлексии:*"
-            header3 = "*✨ Финальная суммаризация:*"
-        elif parse_mode_str == "markdown":
-            header1 = "*📝 Первый ответ модели:*"
-            header2 = "*🤔 Результат рефлексии:*"
-            header3 = "*✨ Финальная суммаризация:*"
-        elif parse_mode_str == "html":
-            header1 = "<b>📝 Первый ответ модели:</b>"
-            header2 = "<b>🤔 Результат рефлексии:</b>"
-            header3 = "<b>✨ Финальная суммаризация:</b>"
-        else:
-            header1 = "📝 Первый ответ модели:"
-            header2 = "🤔 Результат рефлексии:"
-            header3 = "✨ Финальная суммаризация:"
+        # Формируем заголовки в стандартном Markdown (независимо от parse_mode)
+        header1 = "**📝 Первый ответ модели:**"
+        header2 = "**🤔 Результат рефлексии:**"
+        header3 = "**✨ Финальная суммаризация:**"
         
         result_parts = []
         
         # Раздел 1: Первый ответ модели
         result_parts.append(header1)
         if original_summary:
-            if parse_mode_str in ["markdown_v2", "markdown"]:
-                # Используем блок цитаты
-                quoted_text = TelegramFormatter._format_quote_block(original_summary, parse_mode)
-            else:
-                quoted_text = f"> {original_summary}"
+            # Используем блок цитаты в стандартном Markdown
+            quoted_text = TelegramFormatter._format_quote_block_standard_markdown(original_summary)
             result_parts.append(quoted_text)
         else:
             result_parts.append("❌ Ошибка: Не удалось получить первый ответ модели")
@@ -563,10 +554,8 @@ class TelegramFormatter:
         # Раздел 2: Результат рефлексии
         result_parts.append(header2)
         if reflection:
-            if parse_mode_str in ["markdown_v2", "markdown"]:
-                quoted_text = TelegramFormatter._format_quote_block(reflection, parse_mode)
-            else:
-                quoted_text = f"> {reflection}"
+            # Используем блок цитаты в стандартном Markdown
+            quoted_text = TelegramFormatter._format_quote_block_standard_markdown(reflection)
             result_parts.append(quoted_text)
         else:
             result_parts.append("❌ Ошибка: Рефлексия не была выполнена или завершилась с ошибкой")
@@ -576,15 +565,39 @@ class TelegramFormatter:
         # Раздел 3: Финальная суммаризация
         result_parts.append(header3)
         if improved_summary:
-            if parse_mode_str in ["markdown_v2", "markdown"]:
-                quoted_text = TelegramFormatter._format_quote_block(improved_summary, parse_mode)
-            else:
-                quoted_text = f"> {improved_summary}"
+            # Используем блок цитаты в стандартном Markdown
+            quoted_text = TelegramFormatter._format_quote_block_standard_markdown(improved_summary)
             result_parts.append(quoted_text)
         else:
             result_parts.append("❌ Ошибка: Финальная суммаризация не была создана")
         
         return "\n".join(result_parts)
+    
+    @staticmethod
+    def _format_quote_block_standard_markdown(text: str) -> str:
+        """
+        Форматирует текст как блок цитаты в стандартном Markdown
+        
+        Args:
+            text: Текст для форматирования
+            
+        Returns:
+            Отформатированный блок цитаты в стандартном Markdown
+        """
+        if not text:
+            return ""
+        
+        # Для стандартного Markdown используем символ цитаты без экранирования
+        lines = text.split('\n')
+        quoted_lines = []
+        
+        for line in lines:
+            if line.strip():  # Если строка не пустая
+                quoted_lines.append(f"> {line}")
+            else:  # Если строка пустая, оставляем как есть
+                quoted_lines.append("")
+        
+        return "\n".join(quoted_lines)
     
     @staticmethod
     def _format_quote_block(text: str, parse_mode: Union[ParseMode, str] = ParseMode.MARKDOWN_V2) -> str:
@@ -637,8 +650,10 @@ class TelegramFormatter:
     @staticmethod
     def smart_escape_markdown_v2(text: str) -> str:
         """
-        Умное экранирование для MarkdownV2 - сохраняет форматирование, но экранирует проблемные символы
+        DEPRECATED: Умное экранирование для MarkdownV2 - сохраняет форматирование, но экранирует проблемные символы
         Обрабатывает блоки цитат (>) контекстно - не экранирует > в начале строки
+        
+        ВНИМАНИЕ: Этот метод устарел. Используйте telegramify-markdown через TelegramMessageSender.convert_standard_markdown_to_telegram()
         
         Args:
             text: Текст для экранирования
@@ -646,6 +661,9 @@ class TelegramFormatter:
         Returns:
             Умно экранированный текст
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning("smart_escape_markdown_v2() is deprecated. Use telegramify-markdown instead.")
         if not text:
             return text
         

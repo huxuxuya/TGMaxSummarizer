@@ -184,7 +184,7 @@ def ai_provider_selection_keyboard(available_providers: List[str], current_provi
     if 'openrouter' in available_providers and provider_status.get('openrouter', False):
         buttons.append([InlineKeyboardButton("🏆 Топ-5 моделей", callback_data="top5_models_selection")])
     
-    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_chat_management")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])
     return InlineKeyboardMarkup(buttons)
 
 def ai_provider_settings_keyboard(user_preferences: Dict = None) -> InlineKeyboardMarkup:
@@ -194,7 +194,7 @@ def ai_provider_settings_keyboard(user_preferences: Dict = None) -> InlineKeyboa
         [InlineKeyboardButton("⚙️ Настройки по умолчанию", callback_data="ai_provider_defaults")],
         [InlineKeyboardButton("📊 Статус провайдеров", callback_data="ai_provider_status")],
         [InlineKeyboardButton("🔍 Проверить доступность", callback_data="check_providers_availability")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="back_to_settings")]
+        [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]
     ]
     return InlineKeyboardMarkup(buttons)
 
@@ -234,7 +234,7 @@ def confirm_ai_provider_change_keyboard(provider_name: str) -> InlineKeyboardMar
     
     buttons = [
         [InlineKeyboardButton(f"✅ Да, использовать {display_name}", callback_data=f"confirm_provider:{provider_name}")],
-        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_provider_change")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="select_ai_provider")],
         [InlineKeyboardButton("🔙 Назад", callback_data="select_ai_provider")]
     ]
     return InlineKeyboardMarkup(buttons)

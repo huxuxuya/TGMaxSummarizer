@@ -7,6 +7,8 @@ from telegram import Update, InlineKeyboardMarkup, CallbackQuery
 from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
 from telegram_formatter import TelegramFormatter, TextContentType
+from telegram_message_logger import TelegramMessageLogger
+import telegramify_markdown
 # from utils import escape_markdown_v2 as escape_md_preserve_formatting  # Не используется
 
 logger = logging.getLogger(__name__)
@@ -43,38 +45,93 @@ class TelegramMessageSender:
         logger.debug(f"Original text:\n{text}")
         logger.debug(f"Content type: {content_type}")
         
-        # Выбираем метод экранирования в зависимости от типа контента
-        if content_type == TextContentType.RAW:
-            # Сырой текст - используем встроенный хелпер telegram
-            markdown_text = escape_markdown(text, version=2)
-            logger.debug("Using telegram.helpers.escape_markdown() for RAW content")
-        elif content_type == TextContentType.FORMATTED:
-            # Форматированный текст - используем наш умный эскейпер
-            markdown_text = TelegramFormatter.smart_escape_markdown_v2(text)
-            logger.debug("Using TelegramFormatter.smart_escape_markdown_v2() for FORMATTED content")
-        elif content_type == TextContentType.TECHNICAL:
-            # Технический текст - оборачиваем в код
-            markdown_text = f"`{text}`"
-            logger.debug("Wrapping in backticks for TECHNICAL content")
+        # Выбираем метод экранирования в зависимости от parse_mode и content_type
+        if parse_mode == ParseMode.MARKDOWN_V2:
+            # Обработка MarkdownV2
+            if content_type == TextContentType.RAW:
+                # Сырой текст - используем встроенный хелпер telegram
+                formatted_text = escape_markdown(text, version=2)
+                logger.debug("Using telegram.helpers.escape_markdown() for RAW content")
+            elif content_type == TextContentType.FORMATTED:
+                # Форматированный текст - используем наш умный эскейпер
+                formatted_text = TelegramFormatter.smart_escape_markdown_v2(text)
+                logger.debug("Using TelegramFormatter.smart_escape_markdown_v2() for FORMATTED content")
+            elif content_type == TextContentType.TECHNICAL:
+                # Технический текст - оборачиваем в код
+                formatted_text = f"`{text}`"
+                logger.debug("Wrapping in backticks for TECHNICAL content")
+            elif content_type == TextContentType.STANDARD_MARKDOWN:
+                # Стандартный Markdown - конвертируем через telegramify-markdown
+                formatted_text = TelegramMessageSender.convert_standard_markdown_to_telegram(text)
+                logger.debug("Using telegramify-markdown for STANDARD_MARKDOWN content")
+            elif content_type == TextContentType.HTML:
+                # HTML - конвертируем в Telegram MarkdownV2
+                formatted_text = TelegramMessageSender.convert_html_to_telegram_markdown(text)
+                logger.debug("Converting HTML to Telegram MarkdownV2")
+            else:
+                # Fallback на FORMATTED
+                formatted_text = TelegramFormatter.smart_escape_markdown_v2(text)
+                logger.warning(f"Unknown content type {content_type}, using FORMATTED as fallback")
+            
+            logger.debug(f"Text for MarkdownV2:\n{formatted_text}")
+            
+        elif parse_mode == ParseMode.HTML:
+            # Обработка HTML
+            if content_type == TextContentType.RAW:
+                # Сырой текст - экранируем HTML для безопасности
+                formatted_text = TelegramFormatter.escape_html(text)
+                logger.debug("Using TelegramFormatter.escape_html() for RAW content")
+            elif content_type == TextContentType.FORMATTED:
+                # Форматированный текст - уже содержит валидный HTML, не трогаем
+                formatted_text = text
+                logger.debug("Using text as-is for FORMATTED HTML content")
+            elif content_type == TextContentType.TECHNICAL:
+                # Технический текст - оборачиваем в <code>
+                formatted_text = f"<code>{TelegramFormatter.escape_html(text)}</code>"
+                logger.debug("Wrapping in <code> tags for TECHNICAL content")
+            else:
+                # Fallback - экранируем для безопасности
+                formatted_text = TelegramFormatter.escape_html(text)
+                logger.warning(f"Unknown content type {content_type}, using RAW as fallback")
+            
+            logger.debug(f"Text for HTML:\n{formatted_text}")
+            
         else:
-            # Fallback на FORMATTED
-            markdown_text = TelegramFormatter.smart_escape_markdown_v2(text)
-            logger.warning(f"Unknown content type {content_type}, using FORMATTED as fallback")
+            # Для других режимов парсинга используем текст как есть
+            formatted_text = text
+            logger.debug(f"Using text as-is for parse_mode: {parse_mode}")
         
-        logger.debug(f"Text for MarkdownV2:\n{markdown_text}")
+        # Создаем метаданные для логирования
+        metadata = TelegramMessageLogger.create_metadata(
+            chat_id=query.message.chat_id if query.message else None,
+            action="edit",
+            parse_mode=parse_mode.value if parse_mode else "None",
+            content_type=content_type.value,
+            original_text=text,
+            formatted_text=formatted_text
+        )
+        
+        # Логируем сообщение перед отправкой
+        log_path = TelegramMessageLogger.log_message(metadata)
         
         try:
             await query.edit_message_text(
-                text=markdown_text,
+                text=formatted_text,
                 reply_markup=reply_markup,
-                parse_mode=ParseMode.MARKDOWN_V2
+                parse_mode=parse_mode
             )
-            logger.debug("✅ Message edited successfully with MARKDOWN_V2")
+            logger.debug(f"✅ Message edited successfully with {parse_mode}")
+            
+            # Обновляем лог при успехе
+            TelegramMessageLogger.log_success(log_path, query.message.message_id if query.message else None)
             return True
             
         except Exception as e:
-            logger.error(f"❌ MARKDOWN_V2 failed: {e}")
-            logger.error(f"Failed text:\n{markdown_text}")
+            logger.error(f"❌ Message editing failed: {e}")
+            logger.error(f"Failed text:\n{formatted_text}")
+            
+            # Обновляем лог при ошибке
+            TelegramMessageLogger.log_error(log_path, str(e))
             raise e
     
     # Старые функции удалены - теперь используем smart_escape_markdown_v2 из TelegramFormatter
@@ -177,6 +234,152 @@ class TelegramMessageSender:
             return TelegramMessageSender.format_text_for_html(text)
         else:
             return text
+    
+    @staticmethod
+    def convert_standard_markdown_to_telegram(markdown_text: str) -> str:
+        """
+        Конвертирует стандартный Markdown в Telegram MarkdownV2 используя telegramify-markdown
+        
+        Args:
+            markdown_text: Текст в стандартном Markdown формате
+            
+        Returns:
+            Текст в формате Telegram MarkdownV2
+        """
+        try:
+            # Используем telegramify-markdown для конвертации
+            telegram_text = telegramify_markdown.markdownify(markdown_text)
+            logger.debug(f"✅ Successfully converted markdown to telegram format")
+            logger.debug(f"Original: {markdown_text[:100]}...")
+            logger.debug(f"Converted: {telegram_text[:100]}...")
+            
+            # Дополнительная валидация результата
+            TelegramMessageSender._validate_telegram_markdown(telegram_text, markdown_text)
+            
+            return telegram_text
+        except Exception as e:
+            logger.error(f"❌ Failed to convert markdown with telegramify-markdown: {e}")
+            logger.error(f"Problematic text preview: {markdown_text[:200]}...")
+            
+            # Детальное логирование проблемных символов
+            TelegramMessageSender._log_problematic_characters(markdown_text)
+            
+            # Fallback на наш собственный метод
+            logger.debug("🔄 Using fallback conversion method")
+            return TelegramFormatter.smart_escape_markdown_v2(markdown_text)
+    
+    @staticmethod
+    def _validate_telegram_markdown(telegram_text: str, original_text: str) -> None:
+        """
+        Валидирует результат конвертации в Telegram MarkdownV2
+        
+        Args:
+            telegram_text: Конвертированный текст
+            original_text: Исходный текст
+        """
+        # Проверяем на незакрытые теги bold
+        asterisk_count = telegram_text.count('*')
+        if asterisk_count % 2 != 0:
+            logger.warning(f"⚠️ UNBALANCED BOLD TAGS: {asterisk_count} asterisks (should be even)")
+            logger.warning(f"Problematic text: {telegram_text[:200]}...")
+        
+        # Проверяем на незакрытые теги italic
+        underscore_count = telegram_text.count('_')
+        if underscore_count % 2 != 0:
+            logger.warning(f"⚠️ UNBALANCED ITALIC TAGS: {underscore_count} underscores (should be even)")
+            logger.warning(f"Problematic text: {telegram_text[:200]}...")
+        
+        # Проверяем на незакрытые теги code
+        backtick_count = telegram_text.count('`')
+        if backtick_count % 2 != 0:
+            logger.warning(f"⚠️ UNBALANCED CODE TAGS: {backtick_count} backticks (should be even)")
+            logger.warning(f"Problematic text: {telegram_text[:200]}...")
+    
+    @staticmethod
+    def _log_problematic_characters(text: str) -> None:
+        """
+        Логирует проблемные символы в тексте
+        
+        Args:
+            text: Текст для анализа
+        """
+        # Символы, которые могут вызывать проблемы в MarkdownV2
+        problematic_chars = ['*', '_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        
+        logger.debug("=== PROBLEMATIC CHARACTERS ANALYSIS ===")
+        for char in problematic_chars:
+            count = text.count(char)
+            if count > 0:
+                logger.debug(f"Char '{char}': {count} occurrences")
+                
+                # Находим позиции проблемных символов
+                positions = []
+                for i, c in enumerate(text):
+                    if c == char:
+                        positions.append(i)
+                        if len(positions) >= 5:  # Ограничиваем количество позиций
+                            positions.append("...")
+                            break
+                
+                if positions:
+                    logger.debug(f"  Positions: {positions}")
+        
+        # Анализ списков с маркерами
+        lines = text.split('\n')
+        list_markers = ['* ', '- ', '+ ', '1. ', '2. ', '3. ']
+        for i, line in enumerate(lines):
+            for marker in list_markers:
+                if line.strip().startswith(marker):
+                    logger.debug(f"List item at line {i+1}: '{line.strip()}'")
+                    break
+        
+        logger.debug("=== END PROBLEMATIC CHARACTERS ANALYSIS ===")
+    
+    @staticmethod
+    def convert_html_to_telegram_markdown(html_text: str) -> str:
+        """
+        Конвертирует HTML в Telegram MarkdownV2
+        
+        Args:
+            html_text: Текст в HTML формате
+            
+        Returns:
+            Текст в формате Telegram MarkdownV2
+        """
+        try:
+            # Сначала конвертируем HTML в стандартный Markdown
+            import markdown
+            from markdown.extensions import Extension
+            
+            # Создаем простой HTML to Markdown конвертер
+            # Это базовая реализация, можно расширить
+            markdown_text = html_text
+            
+            # Простые замены HTML тегов на Markdown
+            replacements = [
+                (r'<b>(.*?)</b>', r'**\1**'),
+                (r'<strong>(.*?)</strong>', r'**\1**'),
+                (r'<i>(.*?)</i>', r'*\1*'),
+                (r'<em>(.*?)</em>', r'*\1*'),
+                (r'<code>(.*?)</code>', r'`\1`'),
+                (r'<pre>(.*?)</pre>', r'```\n\1\n```'),
+                (r'<h1>(.*?)</h1>', r'# \1'),
+                (r'<h2>(.*?)</h2>', r'## \1'),
+                (r'<h3>(.*?)</h3>', r'### \1'),
+                (r'<a href="([^"]*)">(.*?)</a>', r'[\2](\1)'),
+            ]
+            
+            import re
+            for pattern, replacement in replacements:
+                markdown_text = re.sub(pattern, replacement, markdown_text, flags=re.DOTALL)
+            
+            # Теперь конвертируем в Telegram MarkdownV2
+            return TelegramMessageSender.convert_standard_markdown_to_telegram(markdown_text)
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to convert HTML to telegram markdown: {e}")
+            # Fallback - просто экранируем HTML
+            return TelegramFormatter.escape_html(html_text)
 
 
     @staticmethod
@@ -230,46 +433,92 @@ class TelegramMessageSender:
         logger.debug(f"Original text:\n{text}")
         logger.debug(f"Content type: {content_type}")
         
+        # Подготавливаем formatted_text в зависимости от parse_mode
+        formatted_text = text  # По умолчанию
+        
+        if parse_mode == ParseMode.MARKDOWN_V2:
+            # Выбираем метод экранирования в зависимости от типа контента
+            if content_type == TextContentType.RAW:
+                formatted_text = escape_markdown(text, version=2)
+                logger.debug("Using telegram.helpers.escape_markdown() for RAW content")
+            elif content_type == TextContentType.FORMATTED:
+                formatted_text = TelegramFormatter.smart_escape_markdown_v2(text)
+                logger.debug("Using TelegramFormatter.smart_escape_markdown_v2() for FORMATTED content")
+            elif content_type == TextContentType.TECHNICAL:
+                formatted_text = f"`{text}`"
+                logger.debug("Wrapping in backticks for TECHNICAL content")
+            elif content_type == TextContentType.STANDARD_MARKDOWN:
+                # Стандартный Markdown - конвертируем через telegramify-markdown
+                formatted_text = TelegramMessageSender.convert_standard_markdown_to_telegram(text)
+                logger.debug("Using telegramify-markdown for STANDARD_MARKDOWN content")
+            elif content_type == TextContentType.HTML:
+                # HTML - конвертируем в Telegram MarkdownV2
+                formatted_text = TelegramMessageSender.convert_html_to_telegram_markdown(text)
+                logger.debug("Converting HTML to Telegram MarkdownV2")
+            else:
+                formatted_text = TelegramFormatter.smart_escape_markdown_v2(text)
+                logger.warning(f"Unknown content type {content_type}, using FORMATTED as fallback")
+            
+            logger.debug(f"Text for MarkdownV2:\n{formatted_text}")
+            
+            # Дополнительная отладка для поиска проблемных символов
+            logger.debug("=== SEND_MESSAGE MARKDOWN_V2 DEBUG INFO ===")
+            logger.debug(f"Original text length: {len(text)}")
+            logger.debug(f"Formatted text length: {len(formatted_text)}")
+            logger.debug(f"Content type: {content_type}")
+            
+            # Проверяем на проблемные символы
+            problematic_chars = ['*', '_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+            for char in problematic_chars:
+                count_orig = text.count(char)
+                count_formatted = formatted_text.count(char)
+                if count_orig > 0 or count_formatted > 0:
+                    logger.debug(f"Char '{char}': original={count_orig}, formatted={count_formatted}")
+            
+            # Проверяем на незакрытые теги
+            bold_count = formatted_text.count('*')
+            if bold_count % 2 != 0:
+                logger.warning(f"⚠️ UNBALANCED BOLD TAGS: {bold_count} asterisks (should be even)")
+            
+            logger.debug("=== END SEND_MESSAGE MARKDOWN_V2 DEBUG ===")
+            
+        elif parse_mode == ParseMode.HTML:
+            # Выбираем обработку в зависимости от типа контента
+            if content_type == TextContentType.RAW:
+                # Сырой текст - экранируем HTML для безопасности
+                formatted_text = TelegramFormatter.escape_html(text)
+                logger.debug("Using TelegramFormatter.escape_html() for RAW content")
+            elif content_type == TextContentType.FORMATTED:
+                # Форматированный текст - уже содержит валидный HTML, не трогаем
+                formatted_text = text
+                logger.debug("Using text as-is for FORMATTED HTML content")
+            elif content_type == TextContentType.TECHNICAL:
+                # Технический текст - оборачиваем в <code>
+                formatted_text = f"<code>{TelegramFormatter.escape_html(text)}</code>"
+                logger.debug("Wrapping in <code> tags for TECHNICAL content")
+            else:
+                # Fallback - экранируем для безопасности
+                formatted_text = TelegramFormatter.escape_html(text)
+                logger.warning(f"Unknown content type {content_type}, using RAW as fallback")
+            
+            logger.debug(f"Text for HTML:\n{formatted_text}")
+        
+        # Создаем метаданные для логирования
+        metadata = TelegramMessageLogger.create_metadata(
+            chat_id=chat_id,
+            action="send",
+            parse_mode=parse_mode.value if parse_mode else "None",
+            content_type=content_type.value,
+            original_text=text,
+            formatted_text=formatted_text
+        )
+        
+        # Логируем сообщение перед отправкой
+        log_path = TelegramMessageLogger.log_message(metadata)
+        
         try:
             if parse_mode == ParseMode.MARKDOWN_V2:
-                # Выбираем метод экранирования в зависимости от типа контента
-                if content_type == TextContentType.RAW:
-                    formatted_text = escape_markdown(text, version=2)
-                    logger.debug("Using telegram.helpers.escape_markdown() for RAW content")
-                elif content_type == TextContentType.FORMATTED:
-                    formatted_text = TelegramFormatter.smart_escape_markdown_v2(text)
-                    logger.debug("Using TelegramFormatter.smart_escape_markdown_v2() for FORMATTED content")
-                elif content_type == TextContentType.TECHNICAL:
-                    formatted_text = f"`{text}`"
-                    logger.debug("Wrapping in backticks for TECHNICAL content")
-                else:
-                    formatted_text = TelegramFormatter.smart_escape_markdown_v2(text)
-                    logger.warning(f"Unknown content type {content_type}, using FORMATTED as fallback")
-                
-                logger.debug(f"Text for MarkdownV2:\n{formatted_text}")
-                
-                # Дополнительная отладка для поиска проблемных символов
-                logger.debug("=== EDIT_MESSAGE MARKDOWN_V2 DEBUG INFO ===")
-                logger.debug(f"Original text length: {len(text)}")
-                logger.debug(f"Formatted text length: {len(formatted_text)}")
-                logger.debug(f"Content type: {content_type}")
-                
-                # Проверяем на проблемные символы
-                problematic_chars = ['*', '_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
-                for char in problematic_chars:
-                    count_orig = text.count(char)
-                    count_formatted = formatted_text.count(char)
-                    if count_orig > 0 or count_formatted > 0:
-                        logger.debug(f"Char '{char}': original={count_orig}, formatted={count_formatted}")
-                
-                # Проверяем на незакрытые теги
-                bold_count = formatted_text.count('*')
-                if bold_count % 2 != 0:
-                    logger.warning(f"⚠️ UNBALANCED BOLD TAGS: {bold_count} asterisks (should be even)")
-                
-                logger.debug("=== END EDIT_MESSAGE MARKDOWN_V2 DEBUG ===")
-                
-                await bot.send_message(
+                message = await bot.send_message(
                     chat_id=chat_id,
                     text=formatted_text,
                     reply_markup=reply_markup,
@@ -279,11 +528,7 @@ class TelegramMessageSender:
                     **kwargs
                 )
             elif parse_mode == ParseMode.HTML:
-                # Для HTML используем escape_html
-                formatted_text = TelegramFormatter.escape_html(text)
-                logger.debug(f"Text for HTML:\n{formatted_text}")
-                
-                await bot.send_message(
+                message = await bot.send_message(
                     chat_id=chat_id,
                     text=formatted_text,
                     reply_markup=reply_markup,
@@ -294,7 +539,7 @@ class TelegramMessageSender:
                 )
             else:
                 # Для обычного текста без форматирования
-                await bot.send_message(
+                message = await bot.send_message(
                     chat_id=chat_id,
                     text=text,
                     reply_markup=reply_markup,
@@ -305,16 +550,34 @@ class TelegramMessageSender:
                 )
             
             logger.debug("✅ Message sent successfully")
+            
+            # Обновляем лог при успехе
+            TelegramMessageLogger.log_success(log_path, message.message_id if message else None)
             return True
             
         except Exception as e:
             logger.error(f"❌ SEND_MESSAGE parsing failed: {e}")
             logger.error(f"Failed text:\n{text}")
             
+            # Обновляем лог при ошибке
+            TelegramMessageLogger.log_error(log_path, str(e))
+            
             # Fallback: отправляем как обычный текст
             try:
                 logger.debug("🔄 Fallback: sending as plain text")
-                await bot.send_message(
+                
+                # Создаем новый лог для fallback попытки
+                fallback_metadata = TelegramMessageLogger.create_metadata(
+                    chat_id=chat_id,
+                    action="send_fallback",
+                    parse_mode="None",
+                    content_type="RAW",
+                    original_text=text,
+                    formatted_text=text
+                )
+                fallback_log_path = TelegramMessageLogger.log_message(fallback_metadata)
+                
+                message = await bot.send_message(
                     chat_id=chat_id,
                     text=text,
                     reply_markup=reply_markup,
@@ -324,7 +587,14 @@ class TelegramMessageSender:
                     **kwargs
                 )
                 logger.debug("✅ Fallback message sent successfully")
+                
+                # Обновляем лог fallback при успехе
+                TelegramMessageLogger.log_success(fallback_log_path, message.message_id if message else None)
                 return True
+                
             except Exception as fallback_error:
                 logger.error(f"❌ Fallback also failed: {fallback_error}")
+                
+                # Обновляем лог fallback при ошибке
+                TelegramMessageLogger.log_error(fallback_log_path, str(fallback_error))
                 return False

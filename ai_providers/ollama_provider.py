@@ -1,6 +1,7 @@
 """
 Ollama AI провайдер для локальных моделей
 """
+import asyncio
 import aiohttp
 import json
 from typing import List, Dict, Optional, Any
@@ -13,7 +14,7 @@ class OllamaProvider(BaseAIProvider):
         super().__init__(config)
         self.base_url = config.get('base_url', 'http://localhost:11434')
         self.model = config.get('model', 'deepseek-r1:8b')
-        self.timeout = config.get('timeout', 60)  # Уменьшенный таймаут для удаленных моделей (1 минута)
+        self.timeout = config.get('timeout', 600)  # Таймаут для Ollama запросов (10 минут)
         
         # Отладочная информация
         self.logger.info(f"🔗 DEBUG: OllamaProvider инициализирован с base_url = {self.base_url}")
@@ -83,7 +84,11 @@ class OllamaProvider(BaseAIProvider):
                 return "❌ Ошибка суммаризации через Ollama"
                 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка суммаризации Ollama: {e}")
+            error_msg = f"❌ Ошибка суммаризации Ollama: {e}"
+            self.logger.error(error_msg)
+            # Логируем ошибку если есть логгер
+            if self.llm_logger:
+                self.llm_logger.log_error("summarization", error_msg, str(e))
             return f"❌ Ошибка суммаризации: {str(e)}"
     
     async def is_available(self) -> bool:
@@ -128,12 +133,13 @@ class OllamaProvider(BaseAIProvider):
             self.logger.error(f"❌ Неожиданная ошибка при проверке Ollama: {e}")
             return False
     
-    async def generate_response(self, prompt: str) -> Optional[str]:
+    async def generate_response(self, prompt: str, stream_callback=None) -> Optional[str]:
         """
         Генерировать ответ на произвольный промпт
         
         Args:
             prompt: Текст промпта для генерации ответа
+            stream_callback: Функция для обработки потоковых данных (text_chunk)
             
         Returns:
             Сгенерированный ответ или None при ошибке
@@ -154,7 +160,7 @@ class OllamaProvider(BaseAIProvider):
                 request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
                 self.llm_logger.log_llm_request(prompt, request_type)
             
-            response = await self._call_ollama_api(prompt, is_generation=True)
+            response = await self._call_ollama_api(prompt, is_generation=True, stream_callback=stream_callback)
             
             end_time = time.time()
             response_time = end_time - start_time
@@ -184,7 +190,13 @@ class OllamaProvider(BaseAIProvider):
                 return None
                 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка генерации ответа через Ollama: {e}")
+            error_msg = f"❌ Ошибка генерации ответа через Ollama: {e}"
+            self.logger.error(error_msg)
+            # Логируем ошибку если есть логгер
+            if self.llm_logger:
+                # Определяем тип запроса по содержимому промпта
+                request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
+                self.llm_logger.log_error(request_type, error_msg, str(e))
             return None
     
     def get_provider_info(self) -> Dict[str, Any]:
@@ -228,13 +240,14 @@ class OllamaProvider(BaseAIProvider):
         
         return True
     
-    async def _call_ollama_api(self, text: str, is_generation: bool = False) -> Optional[str]:
+    async def _call_ollama_api(self, text: str, is_generation: bool = False, stream_callback=None) -> Optional[str]:
         """
         Вызвать Ollama API для суммаризации или генерации
         
         Args:
             text: Текст для обработки
             is_generation: True для генерации, False для суммаризации
+            stream_callback: Функция для обработки потоковых данных (text_chunk)
             
         Returns:
             Результат обработки или None при ошибке
@@ -253,10 +266,13 @@ class OllamaProvider(BaseAIProvider):
             self.logger.info(f"📝 Длина текста: {len(text)} символов")
             self.logger.info(f"🤖 Модель: {self.model}")
             
+            # Используем streaming если есть callback
+            use_streaming = stream_callback is not None
+            
             payload = {
                 "model": self.model,
                 "prompt": prompt,
-                "stream": False,
+                "stream": use_streaming,
                 "options": {
                     "temperature": 0.7
                 }
@@ -275,38 +291,82 @@ class OllamaProvider(BaseAIProvider):
                     self.logger.info(f"🔗 DEBUG: Получен ответ со статусом {response.status}")
                     
                     if response.status == 200:
-                        data = await response.json()
-                        self.logger.info(f"🔗 DEBUG: Получен JSON ответ от Ollama: {data}")
-                        
-                        if 'response' in data:
-                            result = data['response'].strip()
-                            self.logger.info(f"📡 Получен ответ от Ollama: {len(result)} символов")
+                        if use_streaming:
+                            # Обработка потокового ответа
+                            full_response = ""
+                            async for line in response.content:
+                                line_str = line.decode('utf-8').strip()
+                                if line_str:
+                                    try:
+                                        chunk_data = json.loads(line_str)
+                                        if 'response' in chunk_data:
+                                            chunk_text = chunk_data['response']
+                                            full_response += chunk_text
+                                            
+                                            # Вызываем callback для анимации
+                                            if stream_callback:
+                                                stream_callback(chunk_text)
+                                            
+                                            # Проверяем завершение
+                                            if chunk_data.get('done', False):
+                                                break
+                                    except json.JSONDecodeError:
+                                        # Пропускаем некорректные JSON строки
+                                        continue
+                            
+                            result = full_response.strip()
+                            self.logger.info(f"📡 Получен потоковый ответ от Ollama: {len(result)} символов")
                             return result
                         else:
-                            self.logger.error("❌ Неожиданный формат ответа от Ollama")
-                            self.logger.error(f"🔗 DEBUG: Ключи в ответе: {list(data.keys())}")
-                            return None
+                            # Обычная обработка (не streaming)
+                            data = await response.json()
+                            self.logger.info(f"🔗 DEBUG: Получен JSON ответ от Ollama: {data}")
+                            
+                            if 'response' in data:
+                                result = data['response'].strip()
+                                self.logger.info(f"📡 Получен ответ от Ollama: {len(result)} символов")
+                                return result
+                            else:
+                                self.logger.error("❌ Неожиданный формат ответа от Ollama")
+                                self.logger.error(f"🔗 DEBUG: Ключи в ответе: {list(data.keys())}")
+                                return None
                     else:
                         error_text = await response.text()
                         self.logger.error(f"❌ Ошибка Ollama API: {response.status} - {error_text}")
                         self.logger.error(f"🔗 DEBUG: Полный ответ сервера: {error_text}")
                         return None
                         
-        except aiohttp.ClientTimeout:
-            self.logger.error(f"❌ Таймаут запроса к Ollama (>{self.timeout}с)")
+        except asyncio.TimeoutError:
+            error_msg = f"❌ Таймаут запроса к Ollama (>{self.timeout}с)"
+            self.logger.error(error_msg)
+            # Логируем ошибку если есть логгер
+            if self.llm_logger:
+                self.llm_logger.log_error("extraction", error_msg, None)
             return None
         except aiohttp.ClientError as e:
-            self.logger.error(f"❌ Ошибка подключения к Ollama: {e}")
+            error_msg = f"❌ Ошибка подключения к Ollama: {e}"
+            self.logger.error(error_msg)
             self.logger.error(f"🔗 DEBUG: Тип ошибки: {type(e)}")
+            # Логируем ошибку
+            if self.llm_logger:
+                self.llm_logger.log_error("extraction", error_msg, str(e))
             return None
         except json.JSONDecodeError as e:
-            self.logger.error(f"❌ Ошибка парсинга JSON от Ollama: {e}")
+            error_msg = f"❌ Ошибка парсинга JSON от Ollama: {e}"
+            self.logger.error(error_msg)
             self.logger.error(f"🔗 DEBUG: Тип ошибки: {type(e)}")
+            # Логируем ошибку
+            if self.llm_logger:
+                self.llm_logger.log_error("extraction", error_msg, str(e))
             return None
         except Exception as e:
-            self.logger.error(f"❌ Неожиданная ошибка Ollama: {e}")
+            error_msg = f"❌ Неожиданная ошибка Ollama: {e}"
+            self.logger.error(error_msg)
             self.logger.error(f"🔗 DEBUG: Тип ошибки: {type(e)}")
             self.logger.error(f"🔗 DEBUG: Аргументы ошибки: {e.args}")
+            # Логируем ошибку
+            if self.llm_logger:
+                self.llm_logger.log_error("extraction", error_msg, str(e))
             return None
     
     async def get_available_models(self) -> Dict[str, Dict[str, Any]]:

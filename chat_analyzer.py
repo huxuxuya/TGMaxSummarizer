@@ -18,15 +18,18 @@ logger = logging.getLogger(__name__)
 
 def escape_markdown(text: str) -> str:
     """
-    Экранирует специальные символы Markdown для Telegram (совместимость)
+    DEPRECATED: Эта функция больше не используется.
+    Экранирование теперь выполняется через telegramify-markdown в TelegramMessageSender.
     
     Args:
         text: Текст для экранирования
         
     Returns:
-        Экранированный текст (теперь просто возвращает исходный текст)
+        Исходный текст без изменений
     """
-    # Не экранируем здесь - это сделает TelegramMessageSender
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning("escape_markdown() is deprecated. Use telegramify-markdown instead.")
     return text
 
 class ChatAnalyzer:
@@ -468,14 +471,14 @@ class ChatAnalyzer:
                 
                 # Проверяем, есть ли в окружении флаг тестового режима
                 test_mode = os.environ.get('TEST_MODE') == 'true'
-                test_model = os.environ.get('TEST_MODEL_NAME')
                 
+                # Use actual model_id parameter, not environment variable
                 llm_logger = LLMLogger(
                     LLM_LOGS_DIR, 
                     date=date, 
                     scenario=scenario,
                     test_mode=test_mode,
-                    model_name=test_model
+                    model_name=model_id  # Use method parameter, not env var
                 )
                 # НЕ очищаем старые логи - каждый запуск в свою папку
                 llm_logger.set_session_info(provider_name, model_id, None, user_id)
@@ -961,7 +964,7 @@ class ChatAnalyzer:
             logger.error(f"❌ Ошибка при структурированном анализе: {e}")
             return None
     
-    async def _classify_messages(self, provider, messages: List[Dict], llm_logger=None, retry_count=0) -> List[Dict]:
+    async def _classify_messages(self, provider, messages: List[Dict], llm_logger=None, retry_count=0, stream_callback=None) -> List[Dict]:
         """
         Классификация сообщений с повторной попыткой при невалидном JSON
         
@@ -991,7 +994,7 @@ class ChatAnalyzer:
             # Получаем ответ
             import time
             start_time = time.time()
-            response = await provider.generate_response(prompt)
+            response = await provider.generate_response(prompt, stream_callback=stream_callback)
             end_time = time.time()
             response_time = end_time - start_time
             
@@ -1107,7 +1110,7 @@ class ChatAnalyzer:
             logger.error(f"❌ Ошибка при фильтрации сообщений: {e}")
             return messages
     
-    async def _extract_slots(self, provider, messages: List[Dict], classification: List[Dict], llm_logger=None) -> List[Dict]:
+    async def _extract_slots(self, provider, messages: List[Dict], classification: List[Dict], llm_logger=None, stream_callback=None) -> List[Dict]:
         """
         Экстракция слотов из сообщений
         
@@ -1150,7 +1153,7 @@ class ChatAnalyzer:
             # Получаем ответ
             import time
             start_time = time.time()
-            response = await provider.generate_response(prompt)
+            response = await provider.generate_response(prompt, stream_callback=stream_callback)
             end_time = time.time()
             response_time = end_time - start_time
             
@@ -1178,7 +1181,7 @@ class ChatAnalyzer:
             logger.error(f"❌ Ошибка при экстракции слотов: {e}")
             return []
     
-    async def _generate_parent_summary(self, provider, events: List[Dict], llm_logger=None) -> str:
+    async def _generate_parent_summary(self, provider, events: List[Dict], llm_logger=None, stream_callback=None) -> str:
         """
         Генерация итоговой сводки для родителей
         
@@ -1207,7 +1210,7 @@ class ChatAnalyzer:
             # Получаем ответ
             import time
             start_time = time.time()
-            response = await provider.generate_response(prompt)
+            response = await provider.generate_response(prompt, stream_callback=stream_callback)
             end_time = time.time()
             response_time = end_time - start_time
             
@@ -1261,9 +1264,18 @@ class ChatAnalyzer:
                 'chat_id': messages[0].get('vk_chat_id') if messages else None
             }
             
-            # Создаем логгер
+            # Создаем логгер с учетом TEST_MODE
             chat_id_for_logger = str(chat_context.get('chat_id', 'unknown'))
-            llm_logger = LLMLogger(scenario="structured_analysis", model_name=model_name)
+            
+            # Check TEST_MODE
+            test_mode = os.environ.get('TEST_MODE') == 'true'
+            
+            # Always use model_name parameter, not TEST_MODEL_NAME
+            llm_logger = LLMLogger(
+                scenario="structured_analysis",
+                model_name=model_name,  # ✅ Use actual model parameter
+                test_mode=test_mode     # ✅ Pass test_mode flag
+            )
             
             # Устанавливаем метаданные сессии
             llm_logger.set_session_info(provider_name, model_name, chat_id_for_logger, user_id)
