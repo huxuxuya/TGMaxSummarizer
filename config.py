@@ -23,6 +23,11 @@ load_env()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "your_bot_token")
 VK_MAX_TOKEN = os.getenv("VK_MAX_TOKEN", "your_vk_max_token")
 
+# Special Users Configuration
+SPECIAL_USERS = {
+    44502596: "Виктория Романовна(учитель)"
+}
+
 # AI Provider Configuration
 AI_PROVIDERS = {
     'gigachat': {

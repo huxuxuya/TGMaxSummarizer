@@ -252,6 +252,15 @@ class BotHandlers:
                 await self._handle_back_to_manage_chats(update, context)
         elif data == "cancel":
             await self._handle_cancel(update, context)
+        # Schedule handlers
+        elif data == "set_schedule":
+            await self._handle_set_schedule(update, context)
+        elif data == "delete_schedule":
+            await self._handle_delete_schedule(update, context)
+        elif data == "confirm_delete_schedule":
+            await self._handle_confirm_delete_schedule(update, context)
+        elif data == "cancel_schedule_upload":
+            await self._handle_cancel_schedule_upload(update, context)
         # AI Provider handlers
         elif data == "select_ai_provider":
             await self.ai_provider_selection_handler(update, context)
@@ -440,6 +449,9 @@ class BotHandlers:
                             f"📭 Новых сообщений нет\n\n"
                         )
                     
+                    # Проверяем наличие расписания
+                    schedule_file_id = self.db.get_group_schedule_photo(group_id)
+                    
                     # Проверяем количество чатов для дальнейших действий
                     if len(chats) == 1:
                         # Если только один чат, автоматически переходим к нему
@@ -448,11 +460,20 @@ class BotHandlers:
                         
                         update_message += f"🎯 Автоматически выбран единственный чат: {chat_name}"
                         
-                        await TelegramMessageSender.safe_edit_message_text(
-                            update.callback_query,
-                            update_message,
-                            reply_markup=None
-                        )
+                        if schedule_file_id:
+                            # Отправляем фото расписания
+                            await context.bot.send_photo(
+                                chat_id=update.effective_chat.id,
+                                photo=schedule_file_id,
+                                caption=update_message,
+                                reply_markup=None
+                            )
+                        else:
+                            await TelegramMessageSender.safe_edit_message_text(
+                                update.callback_query,
+                                update_message,
+                                reply_markup=None
+                            )
                         
                         # Небольшая задержка для лучшего UX
                         await asyncio.sleep(1)
@@ -460,44 +481,99 @@ class BotHandlers:
                         await self._handle_chat_selection(update, context, chat_id)
                     else:
                         # Если несколько чатов, показываем их список
-                        keyboard = chat_list_keyboard(chats)
                         update_message += "📋 Список чатов VK MAX:"
                         
-                        await TelegramMessageSender.safe_edit_message_text(
-                            update.callback_query,
-                            update_message,
-                            reply_markup=keyboard
-                        )
+                        if schedule_file_id:
+                            # Отправляем фото расписания с кнопками
+                            keyboard = chat_list_keyboard(chats, has_schedule=True)
+                            await context.bot.send_photo(
+                                chat_id=update.effective_chat.id,
+                                photo=schedule_file_id,
+                                caption=update_message,
+                                reply_markup=keyboard
+                            )
+                        else:
+                            # Отправляем текстовое сообщение с кнопками
+                            keyboard = chat_list_keyboard(chats, has_schedule=False)
+                            await TelegramMessageSender.safe_edit_message_text(
+                                update.callback_query,
+                                update_message,
+                                reply_markup=keyboard
+                            )
                         
                 else:
                     # Ошибка подключения к VK MAX
-                    await TelegramMessageSender.safe_edit_message_text(
-                        update.callback_query,
+                    schedule_file_id = self.db.get_group_schedule_photo(group_id)
+                    error_message = (
                         f"✅ Выбрана группа: {group_name}\n\n"
                         f"❌ Ошибка подключения к VK MAX\n"
-                        f"📋 Список чатов VK MAX:",
-                        reply_markup=chat_list_keyboard(chats)
+                        f"📋 Список чатов VK MAX:"
                     )
+                    
+                    if schedule_file_id:
+                        keyboard = chat_list_keyboard(chats, has_schedule=True)
+                        await context.bot.send_photo(
+                            chat_id=update.effective_chat.id,
+                            photo=schedule_file_id,
+                            caption=error_message,
+                            reply_markup=keyboard
+                        )
+                    else:
+                        keyboard = chat_list_keyboard(chats, has_schedule=False)
+                        await TelegramMessageSender.safe_edit_message_text(
+                            update.callback_query,
+                            error_message,
+                            reply_markup=keyboard
+                        )
                     
             except Exception as e:
                 logger.error(f"❌ Ошибка при обновлении сообщений группы: {e}")
-                await TelegramMessageSender.safe_edit_message_text(
-                    update.callback_query,
+                schedule_file_id = self.db.get_group_schedule_photo(group_id)
+                error_message = (
                     f"✅ Выбрана группа: {group_name}\n\n"
                     f"⚠️ Ошибка обновления сообщений\n"
-                    f"📋 Список чатов VK MAX:",
-                    reply_markup=chat_list_keyboard(chats)
+                    f"📋 Список чатов VK MAX:"
                 )
+                
+                if schedule_file_id:
+                    keyboard = chat_list_keyboard(chats, has_schedule=True)
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        photo=schedule_file_id,
+                        caption=error_message,
+                        reply_markup=keyboard
+                    )
+                else:
+                    keyboard = chat_list_keyboard(chats, has_schedule=False)
+                    await TelegramMessageSender.safe_edit_message_text(
+                        update.callback_query,
+                        error_message,
+                        reply_markup=keyboard
+                    )
         else:
             # Если чатов нет, показываем меню управления
-            keyboard = chat_management_keyboard()
-            await TelegramMessageSender.safe_edit_message_text(
-                update.callback_query,
+            schedule_file_id = self.db.get_group_schedule_photo(group_id)
+            no_chats_message = (
                 f"✅ Выбрана группа: {group_name}\n\n"
                 f"📊 Управление чатами VK MAX\n\n"
-                f"Чаты не добавлены. Добавьте первый чат:",
-                reply_markup=keyboard
+                f"Чаты не добавлены. Добавьте первый чат:"
             )
+            
+            if schedule_file_id:
+                # Отправляем фото расписания с меню управления
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=schedule_file_id,
+                    caption=no_chats_message,
+                    reply_markup=chat_management_keyboard()
+                )
+            else:
+                # Отправляем текстовое сообщение с меню управления
+                await TelegramMessageSender.safe_edit_message_text(
+                    update.callback_query,
+                    no_chats_message,
+                    reply_markup=chat_management_keyboard()
+                )
     
     async def _handle_add_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка добавления чата"""
@@ -3451,4 +3527,134 @@ class BotHandlers:
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Назад", callback_data="select_provider:ollama")
                 ]])
+            )
+    
+    # Schedule Photo Handlers
+    async def _handle_set_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка установки расписания"""
+        # Сохраняем флаг ожидания фото
+        context.user_data['awaiting_schedule_photo'] = True
+        
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Отмена", callback_data="cancel_schedule_upload")
+        ]])
+        
+        await TelegramMessageSender.safe_edit_message_text(
+            update.callback_query,
+            "📷 Отправьте фото расписания",
+            reply_markup=keyboard
+        )
+    
+    async def _handle_delete_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка удаления расписания"""
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Да, удалить", callback_data="confirm_delete_schedule")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="back_to_manage_chats")]
+        ])
+        
+        await TelegramMessageSender.safe_edit_message_text(
+            update.callback_query,
+            "🗑️ Вы уверены, что хотите удалить расписание?",
+            reply_markup=keyboard
+        )
+    
+    async def _handle_confirm_delete_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Подтверждение удаления расписания"""
+        group_id = context.user_data.get('selected_group_id')
+        if not group_id:
+            await TelegramMessageSender.safe_edit_message_text(
+                update.callback_query,
+                "❌ Ошибка: группа не выбрана",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")
+                ]])
+            )
+            return
+        
+        # Удаляем расписание из БД
+        self.db.delete_group_schedule_photo(group_id)
+        
+        await TelegramMessageSender.safe_edit_message_text(
+            update.callback_query,
+            "✅ Расписание удалено",
+            reply_markup=None
+        )
+        
+        # Обновляем отображение группы
+        await asyncio.sleep(1)
+        await self._handle_group_selection(update, context, group_id)
+    
+    async def _handle_cancel_schedule_upload(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Отмена загрузки расписания"""
+        # Очищаем флаг ожидания
+        context.user_data['awaiting_schedule_photo'] = False
+        
+        # Возвращаемся к списку чатов группы
+        group_id = context.user_data.get('selected_group_id')
+        if group_id:
+            await self._handle_group_selection(update, context, group_id)
+        else:
+            await self._handle_back_to_manage_chats(update, context)
+    
+    async def photo_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик фото для установки расписания"""
+        # Проверяем, ожидается ли фото расписания
+        if not context.user_data.get('awaiting_schedule_photo'):
+            return
+        
+        group_id = context.user_data.get('selected_group_id')
+        if not group_id:
+            await update.message.reply_text("❌ Ошибка: группа не выбрана")
+            return
+        
+        # Получаем file_id самого большого фото
+        photo = update.message.photo[-1]
+        file_id = photo.file_id
+        
+        # Сохраняем в БД
+        self.db.set_group_schedule_photo(group_id, file_id)
+        
+        # Очищаем флаг ожидания
+        context.user_data['awaiting_schedule_photo'] = False
+        
+        # Отправляем подтверждение
+        await update.message.reply_text("✅ Расписание установлено")
+        
+        # Обновляем отображение группы - отправляем новое сообщение с расписанием
+        await asyncio.sleep(1)
+        
+        # Получаем информацию о группе
+        user_groups = self.db.get_user_groups(update.effective_user.id)
+        group_name = "Группа"
+        for group in user_groups:
+            if group['group_id'] == group_id:
+                group_name = group['group_name']
+                break
+        
+        # Получаем чаты группы
+        chats = self.db.get_group_vk_chats(group_id)
+        schedule_file_id = self.db.get_group_schedule_photo(group_id)
+        
+        if chats:
+            update_message = f"✅ Выбрана группа: {group_name}\n\n📋 Список чатов VK MAX:"
+            keyboard = chat_list_keyboard(chats, has_schedule=True)
+            
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=schedule_file_id,
+                caption=update_message,
+                reply_markup=keyboard
+            )
+        else:
+            no_chats_message = (
+                f"✅ Выбрана группа: {group_name}\n\n"
+                f"📊 Управление чатами VK MAX\n\n"
+                f"Чаты не добавлены. Добавьте первый чат:"
+            )
+            
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=schedule_file_id,
+                caption=no_chats_message,
+                reply_markup=chat_management_keyboard()
             )

@@ -13,6 +13,7 @@ from config import AI_PROVIDERS, DEFAULT_AI_PROVIDER, FALLBACK_PROVIDERS, ENABLE
 from telegram_formatter import TelegramFormatter
 from llm_logger import LLMLogger
 from prompts import PromptTemplates
+from utils import get_sender_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -363,13 +364,14 @@ class ChatAnalyzer:
                 if not text:
                     continue
                     
-                # Убираем лишние символы и сокращаем
+                # Убираем лишние символы
                 text = re.sub(r'\s+', ' ', text)
                 
-                if len(text) > 200:
-                    text = text[:200] + "..."
-                
-                sender_name = msg.get('sender_name', 'Неизвестно')
+                sender_id = msg.get('sender_id')
+                sender_name = get_sender_display_name(
+                    sender_id,
+                    msg.get('sender_name', 'Неизвестно')
+                )
                 time = msg.get('message_time', 0)
                 
                 if time:

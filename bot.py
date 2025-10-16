@@ -38,6 +38,7 @@ class VKMaxTelegramBot:
         self.application.add_handler(CommandHandler("start", self.handlers.start_handler))
         self.application.add_handler(CallbackQueryHandler(self.handlers.callback_query_handler))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handlers.message_handler))
+        self.application.add_handler(MessageHandler(filters.PHOTO, self.handlers.photo_handler))
         
         # Обработчик ошибок
         self.application.add_error_handler(self.error_handler)

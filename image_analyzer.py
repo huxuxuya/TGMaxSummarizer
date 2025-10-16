@@ -116,7 +116,7 @@ async def main():
     print("=" * 60)
     
     # Путь к изображению
-    image_path = "IMG_7386.JPG"
+    image_path = "IMG_7388.jpg"
     
     # Проверяем существование файла
     if not os.path.exists(image_path):

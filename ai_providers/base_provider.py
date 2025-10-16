@@ -7,6 +7,8 @@ import logging
 import asyncio
 from datetime import datetime
 
+from utils import get_sender_display_name
+
 logger = logging.getLogger(__name__)
 
 class BaseAIProvider(ABC):
@@ -150,7 +152,11 @@ class BaseAIProvider(ABC):
         formatted_lines = []
         for msg in messages:
             time_str = msg.get('time', '??:??')
-            sender = msg.get('sender', 'Неизвестно')
+            sender_id = msg.get('sender_id')
+            sender = get_sender_display_name(
+                sender_id,
+                msg.get('sender', 'Неизвестно')
+            )
             text = msg.get('text', '')
             
             if text.strip():
@@ -184,14 +190,14 @@ class BaseAIProvider(ABC):
             if not text:
                 continue
                 
-            # Убираем лишние символы и сокращаем
+            # Убираем лишние символы
             text = re.sub(r'\s+', ' ', text)  # Убираем лишние пробелы
             
-            # Сокращаем очень длинные сообщения
-            if len(text) > 200:
-                text = text[:200] + "..."
-            
-            sender_name = msg.get('sender_name', 'Неизвестно')
+            sender_id = msg.get('sender_id')
+            sender_name = get_sender_display_name(
+                sender_id,
+                msg.get('sender_name', 'Неизвестно')
+            )
             time = msg.get('message_time', 0)
             
             # Форматируем время

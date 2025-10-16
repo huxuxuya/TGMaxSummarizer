@@ -53,6 +53,14 @@ class DatabaseManager:
                 )
             """)
             
+            # Миграция: добавляем поле schedule_photo_file_id в groups если его нет
+            try:
+                cursor.execute("ALTER TABLE groups ADD COLUMN schedule_photo_file_id TEXT DEFAULT NULL")
+                logger.info("✅ Добавлено поле schedule_photo_file_id в таблицу groups")
+            except sqlite3.OperationalError:
+                # Поле уже существует
+                pass
+            
             # Связь пользователей с группами
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS group_users (
@@ -699,3 +707,37 @@ class DatabaseManager:
             if result:
                 return result[0]
             return 'deepseek/deepseek-chat-v3.1:free'  # Модель по умолчанию
+    
+    # Schedule Photo Management
+    def set_group_schedule_photo(self, group_id: int, file_id: str):
+        """Установить фото расписания для группы"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE groups 
+                SET schedule_photo_file_id = ?
+                WHERE group_id = ?
+            """, (file_id, group_id))
+            conn.commit()
+    
+    def get_group_schedule_photo(self, group_id: int) -> Optional[str]:
+        """Получить file_id фото расписания группы"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT schedule_photo_file_id FROM groups
+                WHERE group_id = ?
+            """, (group_id,))
+            result = cursor.fetchone()
+            return result[0] if result and result[0] else None
+    
+    def delete_group_schedule_photo(self, group_id: int):
+        """Удалить фото расписания группы"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE groups 
+                SET schedule_photo_file_id = NULL
+                WHERE group_id = ?
+            """, (group_id,))
+            conn.commit()

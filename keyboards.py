@@ -40,7 +40,7 @@ def chat_management_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def chat_list_keyboard(chats: list):
+def chat_list_keyboard(chats: list, has_schedule: bool = False):
     """Клавиатура списка чатов"""
     keyboard = []
     for chat in chats:
@@ -51,6 +51,13 @@ def chat_list_keyboard(chats: list):
     
     # Добавляем кнопку добавления чата
     keyboard.append([InlineKeyboardButton("➕ Добавить чат", callback_data="add_chat")])
+    
+    # Добавляем кнопку расписания
+    if has_schedule:
+        keyboard.append([InlineKeyboardButton("🗑️ Удалить расписание", callback_data="delete_schedule")])
+    else:
+        keyboard.append([InlineKeyboardButton("📅 Установить расписание", callback_data="set_schedule")])
+    
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_manage_chats")])
     return InlineKeyboardMarkup(keyboard)
 

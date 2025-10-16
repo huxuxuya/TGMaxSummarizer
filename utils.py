@@ -385,3 +385,26 @@ def format_summary_for_telegram_html_universal(summary: str, date: str = None, c
     parts = format_message_for_telegram(final_text)
     
     return parts
+
+def get_sender_display_name(sender_id: int, sender_name: str = None) -> str:
+    """
+    Получить отображаемое имя отправителя с учетом специальных пользователей
+    
+    Args:
+        sender_id: ID отправителя
+        sender_name: Имя отправителя по умолчанию
+        
+    Returns:
+        Отформатированное имя для отображения
+    """
+    from config import SPECIAL_USERS
+    
+    # Проверяем, является ли пользователь специальным
+    if sender_id in SPECIAL_USERS:
+        return SPECIAL_USERS[sender_id]
+    
+    # Иначе возвращаем имя по умолчанию
+    if sender_name:
+        return sender_name
+    
+    return f"User {sender_id}" if sender_id else "Unknown"

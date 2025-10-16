@@ -169,6 +169,10 @@ class ProgressChatAnalyzer(ChatAnalyzer):
         if hasattr(provider, 'set_model'):
             provider.set_model(model_id)
         
+        # Устанавливаем логгер в провайдер
+        if llm_logger:
+            provider.set_llm_logger(llm_logger)
+        
         if clean_data_first:
             print_progress_stage("🧹 Очистка данных", "Фильтрация сообщений...")
             
@@ -255,6 +259,10 @@ class ProgressChatAnalyzer(ChatAnalyzer):
         
         if hasattr(provider, 'set_model'):
             provider.set_model(model_name)
+        
+        # Устанавливаем логгер в провайдер
+        if llm_logger:
+            provider.set_llm_logger(llm_logger)
         
         print_progress_stage("🏷️ Классификация", "Анализ типов сообщений...")
         

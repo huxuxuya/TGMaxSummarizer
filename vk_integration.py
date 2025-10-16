@@ -13,6 +13,8 @@ from python_max_client import MaxClient
 from python_max_client.functions.chats import get_chats, get_chat_messages
 from python_max_client.functions.users import resolve_users
 
+from utils import get_sender_display_name
+
 logger = logging.getLogger(__name__)
 
 class VKMaxIntegration:
@@ -178,10 +180,8 @@ class VKMaxIntegration:
                     # Добавляем имена в сообщения
                     for msg in new_messages:
                         sender_id = msg.get('sender')
-                        if sender_id and sender_id in user_names:
-                            msg['sender_name'] = user_names[sender_id]
-                        else:
-                            msg['sender_name'] = f"User {sender_id}" if sender_id else "Unknown"
+                        default_name = user_names.get(sender_id) if sender_id else None
+                        msg['sender_name'] = get_sender_display_name(sender_id, default_name)
                         
                     all_messages.extend(new_messages)
                     logger.info(f"📥 Пакет {batch_count}: загружено {len(new_messages)} новых сообщений")
@@ -292,7 +292,10 @@ class VKMaxIntegration:
                 date_str = datetime.now().strftime("%Y-%m-%d")
             
             # Получаем имя отправителя (уже добавлено в load_chat_messages)
-            sender_name = msg.get("sender_name", f"User {sender_id}" if sender_id else "Unknown")
+            sender_name = get_sender_display_name(
+                sender_id, 
+                msg.get("sender_name")
+            )
             
             # Обрабатываем вложения
             attachments = []
