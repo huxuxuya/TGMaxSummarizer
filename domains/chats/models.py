@@ -92,3 +92,16 @@ class VKChatInfo(BaseModel):
     chat_name: str
     chat_type: ChatType = ChatType.UNKNOWN
 
+class ScheduleAnalysis(BaseModel):
+    """Результаты анализа фото расписания"""
+    id: Optional[int] = None
+    group_id: int
+    file_id: str
+    analysis_text: Optional[str] = None
+    analysis_date: Optional[datetime] = None
+    model_used: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+        protected_namespaces = ()
+

@@ -149,6 +149,11 @@ class BaseAIProvider(ABC):
         if not messages:
             return ""
         
+        # Подсчитываем сообщения с анализом изображений
+        messages_with_images = sum(1 for msg in messages if msg.get('image_analysis'))
+        if messages_with_images > 0:
+            self.logger.info(f"📸 Обнаружено {messages_with_images} сообщений с анализом изображений")
+        
         formatted_lines = []
         for msg in messages:
             time_str = msg.get('time', '??:??')
@@ -159,8 +164,27 @@ class BaseAIProvider(ABC):
             )
             text = msg.get('text', '')
             
-            if text.strip():
-                line = f"[{time_str}] {sender}: {text}"
+            # Получаем анализ изображений если он есть
+            image_analysis = msg.get('image_analysis', [])
+            
+            if text.strip() or image_analysis:
+                # Формируем основной текст сообщения
+                line = f"[{time_str}] {sender}:"
+                
+                # Добавляем текст сообщения
+                if text.strip():
+                    line += f" {text}"
+                
+                # Добавляем описание изображений
+                if image_analysis and isinstance(image_analysis, list) and len(image_analysis) > 0:
+                    for idx, analysis in enumerate(image_analysis, 1):
+                        if isinstance(analysis, dict) and analysis.get('analysis'):
+                            analysis_text = analysis['analysis']
+                            if len(image_analysis) > 1:
+                                line += f"\n  [Изображение {idx}]: {analysis_text}"
+                            else:
+                                line += f"\n  [Изображение]: {analysis_text}"
+                
                 formatted_lines.append(line)
         
         full_text = "\n".join(formatted_lines)
@@ -187,11 +211,14 @@ class BaseAIProvider(ABC):
         
         for msg in messages:
             text = msg.get('text', '').strip()
-            if not text:
+            image_analysis = msg.get('image_analysis', [])
+            
+            # Пропускаем пустые сообщения БЕЗ изображений
+            if not text and not image_analysis:
                 continue
                 
-            # Убираем лишние символы
-            text = re.sub(r'\s+', ' ', text)  # Убираем лишние пробелы
+            # Убираем лишние символы из текста
+            optimized_text = re.sub(r'\s+', ' ', text) if text else ''
             
             sender_id = msg.get('sender_id')
             sender_name = get_sender_display_name(
@@ -211,11 +238,16 @@ class BaseAIProvider(ABC):
             else:
                 time_str = "??:??"
             
-            optimized_messages.append({
+            # Сохраняем image_analysis в оптимизированном сообщении
+            optimized_msg = {
                 'time': time_str,
+                'sender_id': sender_id,
                 'sender': sender_name,
-                'text': text
-            })
+                'text': optimized_text,
+                'image_analysis': image_analysis  # Важно: сохраняем анализ изображений
+            }
+            
+            optimized_messages.append(optimized_msg)
         
         return optimized_messages
     

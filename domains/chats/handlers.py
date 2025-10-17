@@ -643,6 +643,17 @@ class ChatHandlers:
             # Удаляем расписание
             success = self.chat_service.delete_schedule_photo(group_id)
             
+            # Удаляем результаты анализа расписания
+            if success:
+                from core.database.connection import DatabaseConnection
+                from core.config import load_config
+                from .repository import ScheduleAnalysisRepository
+                
+                config = load_config()
+                db_connection = DatabaseConnection(config['database'].path)
+                schedule_analysis_repo = ScheduleAnalysisRepository(db_connection)
+                schedule_analysis_repo.delete_schedule_analysis(group_id)
+            
             from infrastructure.telegram import keyboards
             keyboard = keyboards.schedule_management_keyboard()
             

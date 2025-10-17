@@ -2,6 +2,22 @@ import re
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 
+def escape_markdown(text: str) -> str:
+    """
+    Экранировать специальные символы Markdown для безопасного отображения в Telegram
+    
+    Args:
+        text: Текст для экранирования
+        
+    Returns:
+        Экранированный текст
+    """
+    if not text:
+        return ""
+    
+    # Экранируем основные символы Markdown
+    return text.replace('*', '\\*').replace('_', '\\_').replace('[', '\\[').replace(']', '\\]').replace('`', '\\`')
+
 def format_message_for_telegram(text: str, max_length: int = 4096) -> List[str]:
     """Разбить длинное сообщение на части для Telegram"""
     if len(text) <= max_length:

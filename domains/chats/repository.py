@@ -381,3 +381,48 @@ class GroupVKChatRepository(BaseRepository):
         query = "DELETE FROM group_vk_chats WHERE group_id = ? AND vk_chat_id = ?"
         affected = self.execute_update(query, (group_id, vk_chat_id))
         return affected > 0
+
+class ScheduleAnalysisRepository(BaseRepository):
+    """Репозиторий для работы с анализом фото расписания"""
+    
+    def _table_name(self) -> str:
+        return "schedule_analysis"
+    
+    def _create_table_sql(self) -> str:
+        return """
+            CREATE TABLE IF NOT EXISTS schedule_analysis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                file_id TEXT NOT NULL,
+                analysis_text TEXT,
+                analysis_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                model_used TEXT,
+                FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE CASCADE
+            )
+        """
+    
+    def save_schedule_analysis(self, group_id: int, file_id: str, analysis_text: str, model_used: str) -> bool:
+        """Сохранить результат анализа расписания"""
+        query = """
+            INSERT OR REPLACE INTO schedule_analysis (group_id, file_id, analysis_text, model_used)
+            VALUES (?, ?, ?, ?)
+        """
+        affected = self.execute_update(query, (group_id, file_id, analysis_text, model_used))
+        return affected > 0
+    
+    def get_schedule_analysis(self, group_id: int) -> Optional[Dict[str, Any]]:
+        """Получить последний анализ расписания для группы"""
+        query = """
+            SELECT * FROM schedule_analysis 
+            WHERE group_id = ? 
+            ORDER BY analysis_date DESC 
+            LIMIT 1
+        """
+        results = self.execute_query(query, (group_id,))
+        return results[0] if results else None
+    
+    def delete_schedule_analysis(self, group_id: int) -> bool:
+        """Удалить анализ расписания для группы"""
+        query = "DELETE FROM schedule_analysis WHERE group_id = ?"
+        affected = self.execute_update(query, (group_id,))
+        return affected > 0

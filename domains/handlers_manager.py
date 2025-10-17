@@ -125,6 +125,8 @@ class HandlersManager:
                              self.image_handlers.set_analysis_model_handler)
         self.registry.register("change_analysis_prompt_*", 
                              self.image_handlers.change_analysis_prompt_handler)
+        self.registry.register("show_schedule_analysis_*", 
+                             self.image_handlers.show_schedule_analysis_handler)
         
         # AI Provider handlers
         self.registry.register("ai_provider_status", 
@@ -287,6 +289,11 @@ class HandlersManager:
             success = ctx.chat_service.set_schedule_photo(group_id, file_id)
             
             if success:
+                # Удаляем старые результаты анализа расписания
+                from .repository import ScheduleAnalysisRepository
+                schedule_analysis_repo = ScheduleAnalysisRepository(ctx.db_connection)
+                schedule_analysis_repo.delete_schedule_analysis(group_id)
+                
                 # Очищаем флаги
                 context.user_data.pop('uploading_schedule', None)
                 context.user_data.pop('schedule_group_id', None)
@@ -519,11 +526,10 @@ class HandlersManager:
                 return
             
             # Получаем чаты группы для главного меню
-            user_id = update.effective_user.id
-            user_groups = ctx.user_service.get_user_groups(user_id)
+            group_chats = ctx.chat_service.get_group_vk_chats(selected_group_id)
             
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.main_menu_keyboard(chats=user_groups)
+            keyboard = keyboards.main_menu_keyboard(chats_count=len(group_chats), chats=group_chats)
             
             await query.edit_message_text(
                 f"🏠 [Главное меню]\n\n"

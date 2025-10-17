@@ -552,13 +552,17 @@ def chat_quick_menu_keyboard(vk_chat_id: str, group_id: int = None):
     
     return InlineKeyboardMarkup(keyboard)
 
-def image_analysis_menu_keyboard(vk_chat_id: str):
+def image_analysis_menu_keyboard(vk_chat_id: str, has_schedule: bool = False):
     """Меню анализа изображений"""
     keyboard = [
         [InlineKeyboardButton("▶️ Начать анализ", callback_data=f"start_image_analysis_{vk_chat_id}")],
         [InlineKeyboardButton("⚙️ Настройки анализа", callback_data=f"image_analysis_settings_{vk_chat_id}")],
-        [InlineKeyboardButton("🔙 Назад к чату", callback_data=f"quick_chat_{vk_chat_id}")]
     ]
+    
+    if has_schedule:
+        keyboard.insert(1, [InlineKeyboardButton("📅 Показать анализ расписания", callback_data=f"show_schedule_analysis_{vk_chat_id}")])
+    
+    keyboard.append([InlineKeyboardButton("🔙 Назад к чату", callback_data=f"quick_chat_{vk_chat_id}")])
     return InlineKeyboardMarkup(keyboard)
 
 def image_analysis_settings_keyboard(vk_chat_id: str):

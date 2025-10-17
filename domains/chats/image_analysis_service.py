@@ -49,6 +49,10 @@ class ImageAnalysisService:
             prompt = self.default_prompt
         
         # Проверяем существование файла
+        # Если путь не начинается с images/, добавляем префикс
+        if not image_path.startswith('images/'):
+            image_path = f"images/{image_path}"
+        
         image_file = Path(image_path)
         if not image_file.exists():
             logger.error(f"Файл изображения не найден: {image_path}")
@@ -272,3 +276,48 @@ class ImageAnalysisService:
         except Exception as e:
             logger.error(f"Ошибка подключения к Ollama: {e}")
             return []
+    
+    async def analyze_schedule_photo(self, file_id: str, bot, model: str = None, prompt: str = None) -> Optional[str]:
+        """
+        Анализ фото расписания по file_id из Telegram
+        
+        Args:
+            file_id: file_id фото из Telegram
+            bot: экземпляр Telegram бота
+            model: модель для анализа (по умолчанию self.default_model)
+            prompt: промпт для анализа (по умолчанию специальный промпт для расписания)
+            
+        Returns:
+            Результат анализа или None в случае ошибки
+        """
+        if model is None:
+            model = self.default_model
+        if prompt is None:
+            prompt = "Распознай текст расписания занятий. Укажи все уроки, время и другую информацию. Опиши структуру расписания подробно."
+        
+        try:
+            # Получаем файл от Telegram
+            file = await bot.get_file(file_id)
+            
+            # Создаем временный файл
+            import tempfile
+            import os
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
+                temp_path = temp_file.name
+            
+            # Скачиваем файл
+            await file.download_to_drive(temp_path)
+            
+            try:
+                # Анализируем изображение
+                result = await self.analyze_image(temp_path, model, prompt)
+                return result
+            finally:
+                # Удаляем временный файл
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                    
+        except Exception as e:
+            logger.error(f"Ошибка анализа фото расписания: {e}")
+            return None

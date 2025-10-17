@@ -38,6 +38,21 @@ class ImageAnalysisHandlers:
             text += f"• Проанализировано: {stats.analyzed_images}\n"
             text += f"• Не проанализировано: {stats.unanalyzed_images}\n"
             
+            # Получаем информацию о фото расписания для группы
+            selected_group_id = context.user_data.get('selected_group_id')
+            if selected_group_id:
+                from core.app_context import get_app_context
+                from .repository import ScheduleAnalysisRepository
+                
+                ctx = get_app_context()
+                schedule_photo = ctx.chat_service.get_schedule_photo(selected_group_id)
+                schedule_analysis_repo = ScheduleAnalysisRepository(ctx.db_connection)
+                schedule_analysis = schedule_analysis_repo.get_schedule_analysis(selected_group_id) if schedule_photo else None
+                
+                if schedule_photo:
+                    status = "✅ Проанализировано" if schedule_analysis else "❌ Не проанализировано"
+                    text += f"\n📅 Фото расписания: {status}\n"
+            
             if stats.unanalyzed_images > 0:
                 text += f"\n⚠️ Есть {stats.unanalyzed_images} непроанализированных изображений.\n"
                 text += "Нажмите 'Начать анализ' для обработки."
@@ -45,7 +60,8 @@ class ImageAnalysisHandlers:
                 text += f"\n✅ Все изображения проанализированы!"
             
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id)
+            has_schedule = selected_group_id and ctx.chat_service.get_schedule_photo(selected_group_id) is not None
+            keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule)
             
             await query.edit_message_text(
                 text,
@@ -55,8 +71,12 @@ class ImageAnalysisHandlers:
             
         except Exception as e:
             logger.error(f"Ошибка в image_analysis_menu_handler: {e}")
+            from infrastructure.telegram import keyboards
+            vk_chat_id = query.data.replace('image_analysis_menu_', '', 1)
+            keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=False)
             await query.edit_message_text(
-                format_error_message(e)
+                format_error_message(e),
+                reply_markup=keyboard
             )
     
     async def start_image_analysis_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -74,8 +94,11 @@ class ImageAnalysisHandlers:
             )
             
             if not unanalyzed_messages:
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=False)
                 await query.edit_message_text(
                     "✅ Все изображения уже проанализированы!",
+                    reply_markup=keyboard,
                     parse_mode='Markdown'
                 )
                 return
@@ -129,6 +152,39 @@ class ImageAnalysisHandlers:
                 progress_callback=progress_callback
             )
             
+            # Анализируем фото расписания, если оно есть и не проанализировано
+            selected_group_id = context.user_data.get('selected_group_id')
+            schedule_analyzed = False
+            if selected_group_id:
+                from core.app_context import get_app_context
+                from .repository import ScheduleAnalysisRepository
+                
+                ctx = get_app_context()
+                schedule_photo = ctx.chat_service.get_schedule_photo(selected_group_id)
+                
+                if schedule_photo:
+                    # Проверяем, проанализировано ли уже расписание
+                    schedule_analysis_repo = ScheduleAnalysisRepository(ctx.db_connection)
+                    existing_analysis = schedule_analysis_repo.get_schedule_analysis(selected_group_id)
+                    
+                    if not existing_analysis:
+                        # Анализируем фото расписания только если оно не проанализировано
+                        analysis_result = await self.image_analysis_service.analyze_schedule_photo(
+                            schedule_photo, 
+                            context.bot,
+                            model=model,
+                            prompt="Распознай текст расписания занятий. Укажи все уроки, время и другую информацию. Опиши структуру расписания подробно."
+                        )
+                        
+                        if analysis_result:
+                            schedule_analysis_repo.save_schedule_analysis(
+                                selected_group_id,
+                                schedule_photo,
+                                analysis_result,
+                                model or self.image_analysis_service.default_model
+                            )
+                            schedule_analyzed = True
+            
             # Итоговое сообщение
             success_text = f"✅ *Анализ завершен!*\n\n"
             success_text += f"📊 *Результаты:*\n"
@@ -138,8 +194,20 @@ class ImageAnalysisHandlers:
             success_text += f"• Ошибок: {result_stats['failed_images']}\n"
             success_text += f"• Время обработки: {result_stats['processing_time']:.1f} сек\n"
             
+            if schedule_analyzed:
+                success_text += f"\n📅 *Фото расписания также проанализировано!*"
+            
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id)
+            # Проверяем, есть ли анализ расписания для отображения кнопки
+            has_schedule_analysis = False
+            if selected_group_id:
+                try:
+                    existing_analysis = schedule_analysis_repo.get_schedule_analysis(selected_group_id)
+                    has_schedule_analysis = existing_analysis is not None
+                except:
+                    pass
+            
+            keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=has_schedule_analysis)
             
             await query.edit_message_text(
                 success_text,
@@ -151,8 +219,12 @@ class ImageAnalysisHandlers:
             logger.error(f"Ошибка в start_image_analysis_handler: {e}")
             import traceback
             traceback.print_exc()
+            from infrastructure.telegram import keyboards
+            vk_chat_id = query.data.replace('start_image_analysis_', '', 1)
+            keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=False)
             await query.edit_message_text(
-                format_error_message(e)
+                format_error_message(e),
+                reply_markup=keyboard
             )
     
     async def image_analysis_settings_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -183,8 +255,12 @@ class ImageAnalysisHandlers:
             
         except Exception as e:
             logger.error(f"Ошибка в image_analysis_settings_handler: {e}")
+            from infrastructure.telegram import keyboards
+            vk_chat_id = query.data.replace('image_analysis_settings_', '', 1)
+            keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=False)
             await query.edit_message_text(
-                format_error_message(e)
+                format_error_message(e),
+                reply_markup=keyboard
             )
     
     async def select_analysis_model_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -199,9 +275,12 @@ class ImageAnalysisHandlers:
             available_models = await self.image_analysis_service.get_available_models()
             
             if not available_models:
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=False)
                 await query.edit_message_text(
                     "❌ Не удалось получить список моделей из Ollama.\n"
                     "Проверьте, что сервер Ollama доступен.",
+                    reply_markup=keyboard,
                     parse_mode='Markdown'
                 )
                 return
@@ -227,8 +306,12 @@ class ImageAnalysisHandlers:
             
         except Exception as e:
             logger.error(f"Ошибка в select_analysis_model_handler: {e}")
+            from infrastructure.telegram import keyboards
+            vk_chat_id = query.data.replace('select_analysis_model_', '', 1)
+            keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=False)
             await query.edit_message_text(
-                format_error_message(e)
+                format_error_message(e),
+                reply_markup=keyboard
             )
     
     async def set_analysis_model_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -274,8 +357,12 @@ class ImageAnalysisHandlers:
             
         except Exception as e:
             logger.error(f"Ошибка в set_analysis_model_handler: {e}")
+            from infrastructure.telegram import keyboards
+            vk_chat_id = query.data.replace('set_analysis_model_', '', 1)
+            keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=False)
             await query.edit_message_text(
-                format_error_message(e)
+                format_error_message(e),
+                reply_markup=keyboard
             )
     
     async def change_analysis_prompt_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -299,7 +386,98 @@ class ImageAnalysisHandlers:
             
         except Exception as e:
             logger.error(f"Ошибка в change_analysis_prompt_handler: {e}")
+            from infrastructure.telegram import keyboards
+            vk_chat_id = query.data.replace('change_analysis_prompt_', '', 1)
+            keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=False)
             await query.edit_message_text(
-                format_error_message(e)
+                format_error_message(e),
+                reply_markup=keyboard
+            )
+    
+    async def show_schedule_analysis_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать результат анализа фото расписания"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            vk_chat_id = query.data.replace('show_schedule_analysis_', '', 1)
+            selected_group_id = context.user_data.get('selected_group_id')
+            
+            if not selected_group_id:
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=False)
+                await query.edit_message_text(
+                    "❌ Группа не выбрана",
+                    reply_markup=keyboard
+                )
+                return
+            
+            # Получить анализ из базы
+            from core.app_context import get_app_context
+            from .repository import ScheduleAnalysisRepository
+            
+            ctx = get_app_context()
+            schedule_analysis_repo = ScheduleAnalysisRepository(ctx.db_connection)
+            schedule_analysis = schedule_analysis_repo.get_schedule_analysis(selected_group_id)
+            
+            if schedule_analysis:
+                from shared.utils import escape_markdown
+                
+                text = f"📅 *[Анализ расписания]*\n\n"
+                text += f"🤖 Модель: {escape_markdown(schedule_analysis['model_used'])}\n"
+                text += f"📅 Дата анализа: {escape_markdown(str(schedule_analysis['analysis_date']))}\n\n"
+                text += f"📝 *Распознанный текст:*\n{escape_markdown(schedule_analysis['analysis_text'])}"
+                
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=True)
+                
+                await query.edit_message_text(
+                    text,
+                    reply_markup=keyboard,
+                    parse_mode='Markdown'
+                )
+            else:
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=False)
+                await query.edit_message_text(
+                    "❌ Расписание не проанализировано",
+                    reply_markup=keyboard
+                )
+                
+        except Exception as e:
+            logger.error(f"Ошибка в show_schedule_analysis_handler: {e}")
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=False)
+            
+            # Если это ошибка парсинга Markdown, попробуем отправить без Markdown
+            if "can't parse entities" in str(e) or "can't find end of the entity" in str(e):
+                try:
+                    # Получаем данные еще раз и отправляем без Markdown
+                    selected_group_id = context.user_data.get('selected_group_id')
+                    if selected_group_id:
+                        from core.app_context import get_app_context
+                        from .repository import ScheduleAnalysisRepository
+                        
+                        ctx = get_app_context()
+                        schedule_analysis_repo = ScheduleAnalysisRepository(ctx.db_connection)
+                        schedule_analysis = schedule_analysis_repo.get_schedule_analysis(selected_group_id)
+                        
+                        if schedule_analysis:
+                            text = f"📅 Анализ расписания\n\n"
+                            text += f"🤖 Модель: {schedule_analysis['model_used']}\n"
+                            text += f"📅 Дата анализа: {schedule_analysis['analysis_date']}\n\n"
+                            text += f"📝 Распознанный текст:\n{schedule_analysis['analysis_text']}"
+                            
+                            await query.edit_message_text(
+                                text,
+                                reply_markup=keyboard
+                            )
+                            return
+                except Exception as fallback_error:
+                    logger.error(f"Ошибка в fallback обработке: {fallback_error}")
+            
+            await query.edit_message_text(
+                format_error_message(e),
+                reply_markup=keyboard
             )
 
