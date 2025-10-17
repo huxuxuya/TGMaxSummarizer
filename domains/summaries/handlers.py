@@ -204,7 +204,7 @@ class SummaryHandlers:
             from infrastructure.telegram import sender
             from infrastructure.telegram import formatter
             from infrastructure.telegram.sender import ParseMode
-            from utils import format_summary_for_telegram_html_universal
+            from shared.utils import format_summary_for_telegram_html_universal
             
             if use_html:
                 formatted_parts = format_summary_for_telegram_html_universal(
@@ -214,7 +214,7 @@ class SummaryHandlers:
                 )
                 parse_mode = ParseMode.HTML
             else:
-                from utils import format_summary_for_telegram
+                from shared.utils import format_summary_for_telegram
                 formatted_parts = format_summary_for_telegram(
                     summary.summary_text, 
                     date, 
@@ -550,7 +550,7 @@ class SummaryHandlers:
             ai_service = ctx.ai_service
             
             # Создаем LLM Logger для логирования запросов/ответов
-            from llm_logger import LLMLogger
+            from infrastructure.logging.llm_logger import LLMLogger
             import os
             
             LLM_LOGS_DIR = os.environ.get('LLM_LOGS_DIR', 'llm_logs')

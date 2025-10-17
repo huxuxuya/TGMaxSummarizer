@@ -50,19 +50,6 @@ def format_date_for_display(date_str: str) -> str:
     except ValueError:
         return date_str
 
-def format_time_for_display(timestamp: int) -> str:
-    """Форматировать время для отображения"""
-    try:
-        dt = datetime.fromtimestamp(timestamp / 1000)
-        return dt.strftime("%H:%M")
-    except (ValueError, OSError):
-        return "??:??"
-
-def truncate_text(text: str, max_length: int = 100) -> str:
-    """Обрезать текст до указанной длины"""
-    if len(text) <= max_length:
-        return text
-    return text[:max_length-3] + "..."
 
 def format_chat_stats(stats: Dict) -> str:
     """Форматировать статистику чата для отображения"""
@@ -78,24 +65,6 @@ def format_chat_stats(stats: Dict) -> str:
     
     return text
 
-def validate_chat_id(chat_id: str) -> bool:
-    """Проверить валидность ID чата"""
-    try:
-        int(chat_id)
-        return True
-    except ValueError:
-        return False
-
-def get_date_range(days: int = 7) -> List[str]:
-    """Получить список дат за последние дни"""
-    dates = []
-    today = datetime.now().date()
-    
-    for i in range(days):
-        date = today - timedelta(days=i)
-        dates.append(date.strftime("%Y-%m-%d"))
-    
-    return dates
 
 def format_error_message(error: Exception) -> str:
     """Форматировать сообщение об ошибке"""
@@ -110,13 +79,6 @@ def format_success_message(message: str) -> str:
     """Форматировать сообщение об успехе"""
     return f"✅ {message}"
 
-def format_info_message(message: str) -> str:
-    """Форматировать информационное сообщение"""
-    return f"ℹ️ {message}"
-
-def format_warning_message(message: str) -> str:
-    """Форматировать предупреждение"""
-    return f"⚠️ {message}"
 
 def shorten_callback_data(callback_data: str, max_length: int = 60) -> str:
     """Сокращает callback_data до максимальной длины"""
@@ -140,15 +102,186 @@ def shorten_callback_data(callback_data: str, max_length: int = 60) -> str:
     return callback_data[:max_length]
 
 def get_sender_display_name(sender_id: int, sender_name: str = None) -> str:
-    """Получить отображаемое имя отправителя"""
-    special_users = {
-        44502596: "Виктория Романовна(учитель)"
-    }
+    """
+    Получить отображаемое имя отправителя с учетом специальных пользователей
     
-    if sender_id in special_users:
-        return special_users[sender_id]
+    Args:
+        sender_id: ID отправителя
+        sender_name: Имя отправителя по умолчанию
+        
+    Returns:
+        Отформатированное имя для отображения
+    """
+    from core.app_context import get_app_context
+    ctx = get_app_context()
+    SPECIAL_USERS = ctx.config['bot'].special_users
     
+    # Проверяем, является ли пользователь специальным
+    if sender_id in SPECIAL_USERS:
+        return SPECIAL_USERS[sender_id]
+    
+    # Иначе возвращаем имя по умолчанию
     if sender_name:
         return sender_name
     
     return f"User {sender_id}" if sender_id else "Unknown"
+
+def format_summary_for_telegram(summary: str, date: str = None, chat_name: str = None) -> List[str]:
+    """Форматировать суммаризацию для отправки в Telegram используя telegramify-markdown"""
+    from infrastructure.telegram.sender import TelegramMessageSender
+    from infrastructure.telegram.formatter import TelegramFormatter
+    
+    # Добавляем заголовок с датой, днем недели и названием чата в стандартном Markdown
+    if date:
+        from datetime import datetime
+        try:
+            # Парсим дату
+            date_obj = datetime.strptime(date, '%Y-%m-%d')
+            # Получаем день недели на русском
+            weekdays = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+            weekday = weekdays[date_obj.weekday()]
+            # Форматируем дату для отображения
+            formatted_date = date_obj.strftime('%d.%m.%Y')
+            
+            # Формируем компактный заголовок в стандартном Markdown
+            if chat_name:
+                header = f"📱 **{chat_name}** • {formatted_date}, {weekday}\n\n"
+            else:
+                header = f"📋 **Информация от {formatted_date}, {weekday}**\n\n"
+        except:
+            if chat_name:
+                header = f"📱 **{chat_name}** • {date}\n\n"
+            else:
+                header = f"📋 **Информация от {date}**\n\n"
+    else:
+        if chat_name:
+            header = f"📱 **{chat_name}**\n\n"
+        else:
+            header = "📋 **Информация для ознакомления**\n\n"
+    
+    # Комбинируем заголовок и текст в стандартном Markdown
+    final_text = header + summary
+    
+    # Конвертируем в Telegram MarkdownV2 через telegramify-markdown
+    telegram_text = TelegramMessageSender.convert_standard_markdown_to_telegram(final_text)
+    
+    # Разбиваем на части
+    parts = TelegramFormatter.split_message(telegram_text)
+    
+    return parts
+
+def format_summary_html(summary: str) -> str:
+    """Форматировать суммаризацию для HTML в Telegram"""
+    from infrastructure.telegram.formatter import TelegramFormatter
+    
+    lines = summary.split('\n')
+    formatted_lines = []
+    
+    for line in lines:
+        original_line = line
+        line_stripped = line.strip()
+        
+        # Обрабатываем заголовки секций - конвертируем в жирный текст для HTML
+        if line_stripped.startswith('## 🚨 ТРЕБУЕТ ДЕЙСТВИЙ:'):
+            formatted_lines.append('<b>🚨 ТРЕБУЕТ ДЕЙСТВИЙ:</b>')
+        elif line_stripped.startswith('## 📋 НОВЫЕ ПРАВИЛА:'):
+            formatted_lines.append('<b>📋 НОВЫЕ ПРАВИЛА:</b>')
+        elif line_stripped.startswith('## 📅 МЕРОПРИЯТИЯ:'):
+            formatted_lines.append('<b>📅 МЕРОПРИЯТИЯ:</b>')
+        elif line_stripped.startswith('## ⚠️ ПРОБЛЕМЫ:'):
+            formatted_lines.append('<b>⚠️ ПРОБЛЕМЫ:</b>')
+        # Обрабатываем другие заголовки ## - конвертируем в жирный текст
+        elif line_stripped.startswith('## '):
+            header_text = line_stripped[3:].strip()  # Убираем ##
+            escaped_header = TelegramFormatter.escape_html(header_text)
+            formatted_lines.append(f'<b>{escaped_header}</b>')
+        # Обрабатываем элементы списка с сохранением отступов
+        elif line_stripped.startswith('- '):
+            # Подсчитываем количество пробелов в начале строки для отступа
+            indent_count = len(line) - len(line.lstrip())
+            indent_spaces = ' ' * indent_count
+            
+            item_text = line_stripped[2:].strip()
+            if item_text:
+                # Конвертируем **жирный** в <b>жирный</b> для HTML
+                # Используем более надежный способ замены
+                import re
+                item_text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', item_text)
+                # Экранируем HTML символы
+                escaped_item = TelegramFormatter.escape_html(item_text)
+                # Восстанавливаем теги жирного текста после экранирования
+                escaped_item = escaped_item.replace('&lt;b&gt;', '<b>').replace('&lt;/b&gt;', '</b>')
+                # Сохраняем отступ и добавляем маркер списка
+                formatted_lines.append(f"{indent_spaces}• {escaped_item}")
+        # Обрабатываем пустые строки
+        elif not line_stripped:
+            formatted_lines.append('')
+        # Обычный текст - конвертируем ** в <b></b> для HTML, сохраняя отступы
+        else:
+            if original_line:
+                # Конвертируем **жирный** в <b>жирный</b> для HTML
+                # Используем более надежный способ замены
+                import re
+                converted_line = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', original_line)
+                # Экранируем HTML символы
+                escaped_line = TelegramFormatter.escape_html(converted_line)
+                # Восстанавливаем теги жирного текста после экранирования
+                escaped_line = escaped_line.replace('&lt;b&gt;', '<b>').replace('&lt;/b&gt;', '</b>')
+                formatted_lines.append(escaped_line)
+    
+    return '\n'.join(formatted_lines)
+
+def format_summary_for_telegram_html_universal(summary: str, date: str = None, chat_name: str = None) -> List[str]:
+    """Форматировать суммаризацию для отправки в Telegram с универсальным HTML преобразованием"""
+    from infrastructure.telegram.formatter import TelegramFormatter
+    
+    # Используем универсальное преобразование Markdown в HTML
+    formatted_summary = TelegramFormatter.markdown_to_html_universal(summary, telegram_safe=True)
+    
+    # Добавляем заголовок с датой, днем недели и названием чата
+    if date:
+        from datetime import datetime
+        try:
+            # Парсим дату
+            date_obj = datetime.strptime(date, '%Y-%m-%d')
+            # Получаем день недели на русском
+            weekdays = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+            weekday = weekdays[date_obj.weekday()]
+            # Форматируем дату для отображения
+            formatted_date = date_obj.strftime('%d.%m.%Y')
+            
+            # Формируем компактный заголовок с HTML разметкой
+            if chat_name:
+                escaped_chat_name = TelegramFormatter.escape_html(chat_name)
+                escaped_date = TelegramFormatter.escape_html(formatted_date)
+                escaped_weekday = TelegramFormatter.escape_html(weekday)
+                header = f"📱 <b>{escaped_chat_name}</b> • {escaped_date}, {escaped_weekday}\n\n"
+            else:
+                escaped_date = TelegramFormatter.escape_html(formatted_date)
+                escaped_weekday = TelegramFormatter.escape_html(weekday)
+                header = f"📋 <b>Информация от {escaped_date}, {escaped_weekday}</b>\n\n"
+        except:
+            if chat_name:
+                escaped_chat_name = TelegramFormatter.escape_html(chat_name)
+                escaped_date = TelegramFormatter.escape_html(date)
+                header = f"📱 <b>{escaped_chat_name}</b> • {escaped_date}\n\n"
+            else:
+                escaped_date = TelegramFormatter.escape_html(date)
+                header = f"📋 <b>Информация от {escaped_date}</b>\n\n"
+    else:
+        if chat_name:
+            escaped_chat_name = TelegramFormatter.escape_html(chat_name)
+            header = f"📱 <b>{escaped_chat_name}</b>\n\n"
+        else:
+            header = "📋 <b>Информация для ознакомления</b>\n\n"
+    
+    # Создаем collapsed block quotation для суммаризации
+    collapsed_summary = f'<blockquote expandable>\n{formatted_summary}\n</blockquote>'
+    
+    # Комбинируем заголовок и collapsed суммаризацию
+    final_text = header + collapsed_summary
+    
+    # Разбиваем на части
+    parts = format_message_for_telegram(final_text)
+    
+    return parts

@@ -6,8 +6,8 @@ from typing import Optional, Union, List
 from telegram import Update, InlineKeyboardMarkup, CallbackQuery
 from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
-from telegram_formatter import TelegramFormatter, TextContentType
-from telegram_message_logger import TelegramMessageLogger
+from .formatter import TelegramFormatter, TextContentType
+from ..logging.message_logger import TelegramMessageLogger
 import telegramify_markdown
 # from utils import escape_markdown_v2 as escape_md_preserve_formatting  # Не используется
 

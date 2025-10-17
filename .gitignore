@@ -9,6 +9,8 @@ login_token.txt
 
 # База данных
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 
@@ -69,3 +71,16 @@ Thumbs.db
 *.temp
 temp/
 tmp/
+
+# Cursor/AI артефакты
+.cursor/
+*.plan.md
+
+# Тестовые данные
+test_data/
+
+# Тестовые изображения
+IMG_*.jpg
+IMG_*.JPG
+IMG_*.png
+IMG_*.PNG

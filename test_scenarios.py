@@ -146,7 +146,7 @@ class ProgressChatAnalyzer(ChatAnalyzer):
         
         print_progress_stage("📊 Анализ чата", f"Модель: {model_id}")
         
-        from llm_logger import LLMLogger
+        from infrastructure.logging.llm_logger import LLMLogger
         
         scenario = self._get_scenario_name(enable_reflection, clean_data_first)
         test_mode = os.environ.get('TEST_MODE') == 'true'
@@ -238,7 +238,7 @@ class ProgressChatAnalyzer(ChatAnalyzer):
         
         print_progress_stage("🏗️ Структурированный анализ", f"Модель: {model_name}")
         
-        from llm_logger import LLMLogger
+        from infrastructure.logging.llm_logger import LLMLogger
         
         test_mode = os.environ.get('TEST_MODE') == 'true'
         llm_logger = LLMLogger(
@@ -499,7 +499,9 @@ async def main():
     os.environ['ENABLE_LLM_LOGGING'] = 'true'
     
     try:
-        from config import AI_PROVIDERS
+        from core.app_context import get_app_context
+        ctx = get_app_context()
+        AI_PROVIDERS = ctx.config['ai'].providers
         analyzer = ProgressChatAnalyzer(AI_PROVIDERS, show_generation=show_generation, animation_speed=animation_speed)
     except Exception as e:
         print(f"❌ Ошибка при создании анализатора: {e}")
