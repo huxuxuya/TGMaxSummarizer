@@ -381,8 +381,9 @@ class ChatHandlers:
             stats = self.chat_service.get_chat_stats(chat_id)
             
             # Формируем текст с информацией о чате
+            from infrastructure.telegram.formatter import TelegramFormatter
             text = f"📊 [Статистика чата]\n\n"
-            text += f"💬 Чат: {chat_name}\n\n"
+            text += f"💬 Чат: {TelegramFormatter.escape_markdown_v1(chat_name)}\n\n"
             text += f"📊 *Статистика:*\n"
             text += f"• Всего сообщений: {stats.total_messages}\n"
             text += f"• Дней загружено: {stats.days_count}\n\n"
@@ -438,8 +439,9 @@ class ChatHandlers:
             
             stats = self.chat_service.get_chat_stats(vk_chat_id)
             
+            from infrastructure.telegram.formatter import TelegramFormatter
             text = f"📊 [Статистика чата]\n\n"
-            text += f"💬 Чат: {chat_name}\n\n"
+            text += f"💬 Чат: {TelegramFormatter.escape_markdown_v1(chat_name)}\n\n"
             text += f"📊 *Статистика:*\n"
             text += f"• Всего сообщений: {stats.total_messages}\n"
             text += f"• Дней загружено: {stats.days_count}\n\n"

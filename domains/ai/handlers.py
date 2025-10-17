@@ -313,14 +313,27 @@ class AIHandlers:
                 
                 summary_service.save_summary(summary)
                 
+                # Формируем полный текст результата
+                result_text = f"✅ Анализ завершен за {result.processing_time:.2f}с\n\n"
+                result_text += f"🤖 Провайдер: {result.provider_name}\n"
+                result_text += f"🧠 Модель: {model_id}\n\n"
+                result_text += f"📝 Результат:\n{result.result}"
+                
+                # Разбиваем на части если нужно
+                from shared.utils import format_message_for_telegram
+                message_parts = format_message_for_telegram(result_text)
+                
+                # Отправляем первую часть
                 await query.edit_message_text(
-                    format_success_message(
-                        f"✅ Анализ завершен за {result.processing_time:.2f}с\n\n"
-                        f"🤖 Провайдер: {result.provider_name}\n"
-                        f"🧠 Модель: {model_id}\n\n"
-                        f"📝 Результат:\n{result.result[:500]}..."
-                    )
+                    format_success_message(message_parts[0])
                 )
+                
+                # Отправляем остальные части без кнопок
+                for part in message_parts[1:]:
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=part
+                    )
             else:
                 await query.edit_message_text(
                     f"❌ Ошибка анализа: {result.error}"

@@ -80,15 +80,25 @@ class SummaryHandlers:
             # Создаем клавиатуру с кнопкой "Назад" к списку дат
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"check_summary_{vk_chat_id}")]]
             
-            summary_text = summary.summary_text
-            if len(summary_text) > 1000:
-                summary_text = summary_text[:1000] + "..."
+            # Формируем полный текст
+            full_text = f"📋 Суммаризация за {format_date_for_display(date)}\n\n{summary.summary_text}"
             
+            # Разбиваем на части если нужно
+            from shared.utils import format_message_for_telegram
+            message_parts = format_message_for_telegram(full_text)
+            
+            # Отправляем первую часть с кнопками
             await query.edit_message_text(
-                f"📋 Суммаризация за {format_date_for_display(date)}\n\n"
-                f"{summary_text}",
+                message_parts[0],
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
+            
+            # Отправляем остальные части без кнопок
+            for part in message_parts[1:]:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=part
+                )
             
         except Exception as e:
             logger.error(f"Ошибка в select_date_handler: {e}", exc_info=True)
@@ -230,10 +240,14 @@ class SummaryHandlers:
                     parse_mode=parse_mode
                 )
             
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.summary_result_keyboard(vk_chat_id, date)
+            
             await query.edit_message_text(
                 format_success_message(
                     f"Суммаризация опубликована в группу"
-                )
+                ),
+                reply_markup=keyboard
             )
             
         except Exception as e:
@@ -608,17 +622,30 @@ class SummaryHandlers:
                 from infrastructure.telegram import keyboards
                 keyboard = keyboards.summary_result_keyboard(vk_chat_id, date)
                 
+                # Формируем полный текст результата
+                result_text = f"✅ Анализ завершен за {result.processing_time:.2f}с\n\n"
+                result_text += f"📋 Сценарий: {scenario_names.get(scenario, scenario)}\n"
+                result_text += f"🤖 Провайдер: {result.provider_name}\n"
+                result_text += f"🧠 Модель: {model}\n"
+                result_text += f"📅 Дата: {date}\n\n"
+                result_text += f"📝 Результат:\n{result.result}"
+                
+                # Разбиваем на части если нужно
+                from shared.utils import format_message_for_telegram
+                message_parts = format_message_for_telegram(result_text)
+                
+                # Отправляем первую часть с кнопками
                 await query.edit_message_text(
-                    format_success_message(
-                        f"✅ Анализ завершен за {result.processing_time:.2f}с\n\n"
-                        f"📋 Сценарий: {scenario_names.get(scenario, scenario)}\n"
-                        f"🤖 Провайдер: {result.provider_name}\n"
-                        f"🧠 Модель: {model}\n"
-                        f"📅 Дата: {date}\n\n"
-                        f"📝 Результат:\n{result.result[:500]}..."
-                    ),
+                    format_success_message(message_parts[0]),
                     reply_markup=keyboard
                 )
+                
+                # Отправляем остальные части без кнопок
+                for part in message_parts[1:]:
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=part
+                    )
             else:
                 from infrastructure.telegram import keyboards
                 keyboard = keyboards.summary_result_keyboard(vk_chat_id, date)

@@ -199,9 +199,10 @@ class UserHandlers:
                     # Получаем статистику чата
                     stats = chat_service.get_chat_stats(last_chat_id)
                     
+                    from infrastructure.telegram.formatter import TelegramFormatter
                     text = f"📊 [Статистика группы и чата]\n\n"
-                    text += f"✅ [Группа]: {group_name}\n"
-                    text += f"💬 [Чат]: {chat_name}\n\n"
+                    text += f"✅ [Группа]: {TelegramFormatter.escape_markdown_v1(group_name)}\n"
+                    text += f"💬 [Чат]: {TelegramFormatter.escape_markdown_v1(chat_name)}\n\n"
                     text += f"📊 *Статистика:*\n"
                     text += f"• Всего сообщений: {stats.total_messages}\n"
                     text += f"• Дней загружено: {stats.days_count}\n\n"

@@ -351,10 +351,11 @@ class HandlersManager:
                 has_schedule = ctx.chat_service.get_schedule_photo(group.group_id) is not None
                 status_text = "✅ Расписание установлено" if has_schedule else "❌ Расписание не установлено"
                 
+                from infrastructure.telegram.formatter import TelegramFormatter
                 await update.message.reply_text(
                     f"📅 *[Управление расписанием]*\n\n"
-                    f"[Группа]: {group.group_name}\n"
-                    f"Статус: {status_text}\n\n"
+                    f"[Группа]: {TelegramFormatter.escape_markdown_v1(group.group_name)}\n"
+                    f"Статус: {TelegramFormatter.escape_markdown_v1(status_text)}\n\n"
                     f"Выберите действие:",
                     reply_markup=keyboard,
                     parse_mode='Markdown'
@@ -485,10 +486,11 @@ class HandlersManager:
             has_schedule = ctx.chat_service.get_schedule_photo(selected_group_id) is not None
             status_text = "✅ Расписание установлено" if has_schedule else "❌ Расписание не установлено"
             
+            from infrastructure.telegram.formatter import TelegramFormatter
             await query.edit_message_text(
                 f"📅 *[Управление расписанием]*\n\n"
-                f"[Группа]: {group.group_name}\n"
-                f"Статус: {status_text}\n\n"
+                f"[Группа]: {TelegramFormatter.escape_markdown_v1(group.group_name)}\n"
+                f"Статус: {TelegramFormatter.escape_markdown_v1(status_text)}\n\n"
                 f"Выберите действие:",
                 reply_markup=keyboard,
                 parse_mode='Markdown'
@@ -570,10 +572,11 @@ class HandlersManager:
             has_schedule = ctx.chat_service.get_schedule_photo(group_id) is not None
             status_text = "✅ Расписание установлено" if has_schedule else "❌ Расписание не установлено"
             
+            from infrastructure.telegram.formatter import TelegramFormatter
             await query.edit_message_text(
                 f"📅 *[Управление расписанием]*\n\n"
-                f"[Группа]: {group.group_name}\n"
-                f"Статус: {status_text}\n\n"
+                f"[Группа]: {TelegramFormatter.escape_markdown_v1(group.group_name)}\n"
+                f"Статус: {TelegramFormatter.escape_markdown_v1(status_text)}\n\n"
                 f"Выберите действие:",
                 reply_markup=keyboard,
                 parse_mode='Markdown'

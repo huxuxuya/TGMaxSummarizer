@@ -421,12 +421,12 @@ class ImageAnalysisHandlers:
             schedule_analysis = schedule_analysis_repo.get_schedule_analysis(selected_group_id)
             
             if schedule_analysis:
-                from shared.utils import escape_markdown
+                from infrastructure.telegram.formatter import TelegramFormatter
                 
                 text = f"📅 *[Анализ расписания]*\n\n"
-                text += f"🤖 Модель: {escape_markdown(schedule_analysis['model_used'])}\n"
-                text += f"📅 Дата анализа: {escape_markdown(str(schedule_analysis['analysis_date']))}\n\n"
-                text += f"📝 *Распознанный текст:*\n{escape_markdown(schedule_analysis['analysis_text'])}"
+                text += f"🤖 Модель: {TelegramFormatter.escape_markdown_v1(schedule_analysis['model_used'])}\n"
+                text += f"📅 Дата анализа: {TelegramFormatter.escape_markdown_v1(str(schedule_analysis['analysis_date']))}\n\n"
+                text += f"📝 *Распознанный текст:*\n{TelegramFormatter.escape_markdown_v1(schedule_analysis['analysis_text'])}"
                 
                 from infrastructure.telegram import keyboards
                 keyboard = keyboards.image_analysis_menu_keyboard(vk_chat_id, has_schedule=True)

@@ -2,21 +2,6 @@ import re
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 
-def escape_markdown(text: str) -> str:
-    """
-    Экранировать специальные символы Markdown для безопасного отображения в Telegram
-    
-    Args:
-        text: Текст для экранирования
-        
-    Returns:
-        Экранированный текст
-    """
-    if not text:
-        return ""
-    
-    # Экранируем основные символы Markdown
-    return text.replace('*', '\\*').replace('_', '\\_').replace('[', '\\[').replace(']', '\\]').replace('`', '\\`')
 
 def format_message_for_telegram(text: str, max_length: int = 4096) -> List[str]:
     """Разбить длинное сообщение на части для Telegram"""
@@ -95,11 +80,16 @@ def format_chat_stats(stats) -> str:
 
 
 def format_error_message(error: Exception) -> str:
-    """Форматировать сообщение об ошибке"""
+    """Форматировать сообщение об ошибке для Telegram с экранированием Markdown"""
+    from infrastructure.telegram.formatter import TelegramFormatter
+    
     error_msg = str(error)
     
     if len(error_msg) > 200:
         error_msg = error_msg[:200] + "..."
+    
+    # Экранируем специальные символы Markdown
+    error_msg = TelegramFormatter.escape_markdown_v1(error_msg)
     
     return f"❌ Ошибка: {error_msg}"
 
