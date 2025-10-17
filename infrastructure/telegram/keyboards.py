@@ -5,7 +5,7 @@ import json
 import os
 from typing import List, Dict
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from utils import shorten_callback_data
+from shared.utils import shorten_callback_data
 
 def main_menu_keyboard(chats_count: int = 0, chats: list = None):
     """Главное меню (упрощенное)"""

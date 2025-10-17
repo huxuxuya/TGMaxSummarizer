@@ -7,7 +7,7 @@ import logging
 import asyncio
 from datetime import datetime
 
-from utils import get_sender_display_name
+from shared.utils import get_sender_display_name
 
 logger = logging.getLogger(__name__)
 
