@@ -97,9 +97,17 @@ def date_selection_keyboard(dates: list):
     """Клавиатура выбора даты"""
     keyboard = []
     for date in dates:
+        # Handle both dict and model objects
+        if hasattr(date, 'date'):
+            date_str = date.date
+            count = date.count
+        else:
+            date_str = date['date']
+            count = date['count']
+            
         keyboard.append([InlineKeyboardButton(
-            f"📅 {date['date']} ({date['count']} сообщений)", 
-            callback_data=f"select_date_{date['date']}"
+            f"📅 {date_str} ({count} сообщений)", 
+            callback_data=f"select_date_{date_str}"
         )])
     keyboard.append([InlineKeyboardButton("🤖 Выбрать модель для анализа", callback_data="select_model_for_analysis")])
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_chat_settings")])

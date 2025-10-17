@@ -10,10 +10,18 @@ python-max-client
 openai==1.3.0
 google-generativeai==0.3.0
 aiohttp==3.9.0
-aiofiles==23.2.1
 
 # Database
-# sqlite3 - встроен в Python
+sqlite3
 
 # Utilities
-# asyncio, logging, datetime, pathlib, typing, enum, json, re, os - встроены в Python
+asyncio
+logging
+datetime
+pathlib
+typing
+enum
+json
+re
+os
+

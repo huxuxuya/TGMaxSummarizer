@@ -388,8 +388,8 @@ class BotHandlers:
         user_groups = self.db.get_user_groups(update.effective_user.id)
         group_name = "Группа"
         for group in user_groups:
-            if group['group_id'] == group_id:
-                group_name = group['group_name']
+            if group.group_id == group_id:
+                group_name = group.group_name
                 break
         
         # Показываем сообщение о выборе группы и начале обновления
@@ -3627,8 +3627,8 @@ class BotHandlers:
         user_groups = self.db.get_user_groups(update.effective_user.id)
         group_name = "Группа"
         for group in user_groups:
-            if group['group_id'] == group_id:
-                group_name = group['group_name']
+            if group.group_id == group_id:
+                group_name = group.group_name
                 break
         
         # Получаем чаты группы
