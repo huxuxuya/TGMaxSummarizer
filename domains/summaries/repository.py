@@ -23,6 +23,10 @@ class SummaryRepository(BaseRepository):
                 processing_time REAL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                model_provider TEXT,
+                model_id TEXT,
+                scenario_type TEXT,
+                generation_time_seconds REAL,
                 UNIQUE(vk_chat_id, date, summary_type)
             )
         """
@@ -33,8 +37,9 @@ class SummaryRepository(BaseRepository):
             INSERT OR REPLACE INTO summaries (
                 vk_chat_id, date, summary_text, summary_type, 
                 reflection_text, improved_summary_text, provider_name, 
-                provider_version, processing_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                provider_version, processing_time, model_provider, 
+                model_id, scenario_type, generation_time_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         affected = self.execute_update(query, (
             summary.vk_chat_id,
@@ -45,7 +50,11 @@ class SummaryRepository(BaseRepository):
             summary.improved_summary_text,
             summary.provider_name,
             summary.provider_version,
-            summary.processing_time
+            summary.processing_time,
+            summary.model_provider,
+            summary.model_id,
+            summary.scenario_type,
+            summary.generation_time_seconds
         ))
         return affected > 0
     
@@ -54,7 +63,8 @@ class SummaryRepository(BaseRepository):
         query = """
             SELECT id, vk_chat_id, date, summary_text, summary_type,
                    reflection_text, improved_summary_text, provider_name,
-                   provider_version, processing_time, created_at, updated_at
+                   provider_version, processing_time, created_at, updated_at,
+                   model_provider, model_id, scenario_type, generation_time_seconds
             FROM summaries
             WHERE vk_chat_id = ? AND date = ? AND summary_type = ?
         """
@@ -73,7 +83,11 @@ class SummaryRepository(BaseRepository):
                 provider_version=row['provider_version'],
                 processing_time=row['processing_time'],
                 created_at=row['created_at'],
-                updated_at=row['updated_at']
+                updated_at=row['updated_at'],
+                model_provider=row['model_provider'],
+                model_id=row['model_id'],
+                scenario_type=row['scenario_type'],
+                generation_time_seconds=row['generation_time_seconds']
             )
         return None
     

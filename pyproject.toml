@@ -1,0 +1,37 @@
+[tool.ruff]
+# Ruff configuration for Python linting
+select = ["E", "F", "B", "I", "UP", "C4", "SIM", "TCH"]
+ignore = ["E501"]  # Line too long
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+# Enforce attribute access on Pydantic models
+# This helps catch usage like model['key'] at lint time
+enabled-rules = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "B",      # flake8-bugbear
+    "I",      # isort
+    "UP",     # pyupgrade
+    "C4",     # flake8-comprehensions
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+]
+
+[tool.ruff.lint.isort]
+# Import sorting configuration
+known-first-party = ["domains", "core", "infrastructure", "shared"]
+
+[tool.ruff.lint.flake8-type-checking]
+# Type checking imports
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+
+[tool.ruff.lint.pydocstyle]
+# Docstring conventions
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Ignore certain rules for specific files
+"__init__.py" = ["F401"]  # Imported but unused
+"test_*.py" = ["E501", "F401"]  # Test files can have longer lines and unused imports

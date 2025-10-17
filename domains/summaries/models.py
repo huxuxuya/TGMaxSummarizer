@@ -25,8 +25,16 @@ class Summary(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     
+    # НОВЫЕ ПОЛЯ для метаданных:
+    model_provider: Optional[str] = None  # openrouter, ollama, etc
+    model_id: Optional[str] = None  # nvidia/llama-3.3-8b, etc
+    scenario_type: Optional[str] = None  # fast, reflection, cleaning, structured
+    generation_time_seconds: Optional[float] = None  # Время генерации
+    
     class Config:
         from_attributes = True
+        # Disable protected namespace warnings for model_* fields
+        protected_namespaces = ()
 
 class SummaryInfo(BaseModel):
     """Summary metadata for listings"""

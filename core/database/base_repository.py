@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, TypeVar, Generic
 from .connection import DatabaseConnection
+from .async_connection import AsyncDatabaseConnection
 from ..exceptions import DatabaseError
 import logging
 
@@ -88,4 +89,20 @@ class BaseRepository(ABC, Generic[T]):
         query = f"DELETE FROM {self._table_name()} WHERE id = ?"
         affected = self.execute_update(query, (id_value,))
         return affected > 0
+    
+    # Async methods
+    async def execute_query_async(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
+        """Async version of execute_query"""
+        async_db = AsyncDatabaseConnection(self.db)
+        return await async_db.execute_query(query, params)
+
+    async def execute_update_async(self, query: str, params: tuple = ()) -> int:
+        """Async version of execute_update"""
+        async_db = AsyncDatabaseConnection(self.db)
+        return await async_db.execute_update(query, params)
+
+    async def execute_many_async(self, query: str, params_list: List[tuple]) -> int:
+        """Async version of execute_many"""
+        async_db = AsyncDatabaseConnection(self.db)
+        return await async_db.execute_many(query, params_list)
 

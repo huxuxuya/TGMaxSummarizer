@@ -7,24 +7,57 @@ from typing import List, Dict
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from utils import shorten_callback_data
 
-def main_menu_keyboard():
-    """Главное меню"""
-    keyboard = [
-        [InlineKeyboardButton("📊 Управление чатами", callback_data="manage_chats")],
-        [InlineKeyboardButton("📈 Статистика", callback_data="statistics")],
+def main_menu_keyboard(chats_count: int = 0, chats: list = None):
+    """Главное меню (упрощенное)"""
+    keyboard = []
+    
+    # Если чатов мало - показываем сразу
+    if chats and len(chats) <= 3:
+        for chat in chats:
+            # Support both Pydantic models and dicts
+            if hasattr(chat, 'chat_id'):
+                chat_id = chat.chat_id
+                chat_name = chat.chat_name
+            else:
+                chat_id = chat['chat_id']
+                chat_name = chat.get('chat_name', f'Чат {chat_id}')
+            
+            keyboard.append([InlineKeyboardButton(
+                f"💬 {chat_name}", 
+                callback_data=f"quick_chat_{chat_id}"
+            )])
+    else:
+        keyboard.append([InlineKeyboardButton(
+            "📊 Выбрать чат", 
+            callback_data="select_chat_quick"
+        )])
+    
+    # Быстрые действия (без выбора чата)
+    keyboard.append([InlineKeyboardButton("⚡ Быстрые действия", callback_data="quick_actions")])
+    
+    # AI и Настройки
+    keyboard.extend([
         [InlineKeyboardButton("🤖 AI Модели", callback_data="select_ai_provider")],
-        [InlineKeyboardButton("🔧 Настройки", callback_data="settings")],
-        [InlineKeyboardButton("🔄 Сменить группу", callback_data="change_group")]
-    ]
+        [InlineKeyboardButton("⚙️ Настройки", callback_data="settings_menu")]
+    ])
+    
     return InlineKeyboardMarkup(keyboard)
 
 def group_selection_keyboard(groups: list):
     """Клавиатура выбора группы"""
     keyboard = []
     for group in groups:
+        # Support both Pydantic models and dicts
+        if hasattr(group, 'group_id'):
+            group_id = group.group_id
+            group_name = group.group_name
+        else:
+            group_id = group['group_id']
+            group_name = group['group_name']
+        
         keyboard.append([InlineKeyboardButton(
-            f"📱 {group.group_name}", 
-            callback_data=f"select_group_{group.group_id}"
+            f"📱 {group_name}", 
+            callback_data=f"select_group_{group_id}"
         )])
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     return InlineKeyboardMarkup(keyboard)
@@ -40,13 +73,22 @@ def chat_management_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def chat_list_keyboard(chats: list, has_schedule: bool = False):
-    """Клавиатура списка чатов"""
+def chat_list_keyboard(chats: list, has_schedule: bool = False, context: str = "select"):
+    """
+    Клавиатура списка чатов
+    context: "select" (для select_chat_) или "quick" (для quick_chat_)
+    """
     keyboard = []
     for chat in chats:
+        # Используем разные callback_data в зависимости от контекста
+        if context == "quick":
+            callback_data = f"quick_chat_{chat['chat_id']}"
+        else:
+            callback_data = f"select_chat_{chat['chat_id']}"
+            
         keyboard.append([InlineKeyboardButton(
             f"💬 {chat['chat_name']}", 
-            callback_data=f"select_chat_{chat['chat_id']}"
+            callback_data=callback_data
         )])
     
     # Добавляем кнопку добавления чата
@@ -58,7 +100,7 @@ def chat_list_keyboard(chats: list, has_schedule: bool = False):
     else:
         keyboard.append([InlineKeyboardButton("📅 Установить расписание", callback_data="set_schedule")])
     
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_manage_chats")])
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])  # ИСПРАВЛЕНО
     return InlineKeyboardMarkup(keyboard)
 
 def chat_settings_keyboard(vk_chat_id: str):
@@ -67,9 +109,8 @@ def chat_settings_keyboard(vk_chat_id: str):
         [InlineKeyboardButton("📊 Статистика", callback_data=f"chat_stats_{vk_chat_id}")],
         [InlineKeyboardButton("🔄 Загрузить сообщения", callback_data=f"load_messages_{vk_chat_id}")],
         [InlineKeyboardButton("📋 Проверить суммаризацию", callback_data=f"check_summary_{vk_chat_id}")],
-        [InlineKeyboardButton("📤 Вывести в группу", callback_data=f"publish_summary_{vk_chat_id}")],
-        [InlineKeyboardButton("📤 Вывести в группу (HTML)", callback_data=f"publish_summary_html_{vk_chat_id}")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="back_to_manage_chats")]
+        [InlineKeyboardButton("📤 Вывести в группу", callback_data=f"publish_menu_{vk_chat_id}")],  # ИЗМЕНЕНО
+        [InlineKeyboardButton("🔙 Назад", callback_data=f"quick_chat_{vk_chat_id}")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -93,7 +134,7 @@ def confirm_keyboard(action: str, data: str = ""):
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def date_selection_keyboard(dates: list):
+def date_selection_keyboard(dates: list, vk_chat_id: str = None):
     """Клавиатура выбора даты"""
     keyboard = []
     for date in dates:
@@ -110,11 +151,18 @@ def date_selection_keyboard(dates: list):
             callback_data=f"select_date_{date_str}"
         )])
     keyboard.append([InlineKeyboardButton("🤖 Выбрать модель для анализа", callback_data="select_model_for_analysis")])
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_chat_settings")])
+    # ИСПРАВЛЕНО: правильная кнопка назад
+    if vk_chat_id:
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=f"quick_chat_{vk_chat_id}")])
+    else:
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])
     return InlineKeyboardMarkup(keyboard)
 
-def available_chats_keyboard(chats: list, page: int = 0, per_page: int = 10):
-    """Клавиатура выбора доступных чатов VK MAX"""
+def available_chats_keyboard(chats: list, page: int = 0, per_page: int = 10, context: str = "select"):
+    """
+    Клавиатура выбора доступных чатов VK MAX
+    context: "select" (для select_chat_) или "quick" (для quick_chat_)
+    """
     keyboard = []
     
     # Вычисляем диапазон для текущей страницы
@@ -128,9 +176,16 @@ def available_chats_keyboard(chats: list, page: int = 0, per_page: int = 10):
         participants = chat['participants_count']
         
         button_text = f"💬 {title} ({participants} чел.)"
+        
+        # Используем разные callback_data в зависимости от контекста
+        if context == "quick":
+            callback_data = f"quick_chat_{chat['id']}"
+        else:
+            callback_data = f"select_available_chat_{chat['id']}"
+            
         keyboard.append([InlineKeyboardButton(
             button_text,
-            callback_data=f"select_available_chat_{chat['id']}"
+            callback_data=callback_data
         )])
     
     # Добавляем навигацию по страницам
@@ -146,7 +201,7 @@ def available_chats_keyboard(chats: list, page: int = 0, per_page: int = 10):
     
     # Добавляем кнопки управления
     keyboard.append([InlineKeyboardButton("🔍 Поиск по ID", callback_data="search_chat_by_id")])
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_manage_chats")])
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])  # ИСПРАВЛЕНО
     
     return InlineKeyboardMarkup(keyboard)
 
@@ -177,7 +232,13 @@ def ai_provider_selection_keyboard(available_providers: List[str], current_provi
     provider_status = {}
     if provider_info:
         for info in provider_info:
-            provider_status[info['name']] = info.get('available', False)
+            # info может быть как словарем, так и объектом ProviderInfo
+            if hasattr(info, 'name'):
+                # Это объект ProviderInfo
+                provider_status[info.name] = info.available
+            else:
+                # Это словарь
+                provider_status[info['name']] = info.get('available', False)
     
     for provider in available_providers:
         display_name = provider_display_names.get(provider, f"⚙️ {provider.title()}")
@@ -207,6 +268,8 @@ def ai_provider_settings_keyboard(user_preferences: Dict = None) -> InlineKeyboa
     buttons = [
         [InlineKeyboardButton("🎯 Выбрать модель", callback_data="select_ai_provider")],
         [InlineKeyboardButton("⚙️ Настройки по умолчанию", callback_data="ai_provider_defaults")],
+        [InlineKeyboardButton("📋 Сценарий суммаризации", callback_data="scenario_defaults")],
+        [InlineKeyboardButton("🗑️ Очистить настройки", callback_data="clear_ai_settings")],
         [InlineKeyboardButton("📊 Статус провайдеров", callback_data="ai_provider_status")],
         [InlineKeyboardButton("🔍 Проверить доступность", callback_data="check_providers_availability")],
         [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]
@@ -230,6 +293,27 @@ def ai_provider_defaults_keyboard(current_default: str = 'gigachat') -> InlineKe
         buttons.append([InlineKeyboardButton(
             f"{prefix}{display_name}",
             callback_data=f"set_default_provider:{provider}"
+        )])
+    
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="ai_provider_settings")])
+    return InlineKeyboardMarkup(buttons)
+
+def scenario_defaults_keyboard(current_default: str = 'fast') -> InlineKeyboardMarkup:
+    """Создать клавиатуру для выбора сценария суммаризации по умолчанию"""
+    buttons = []
+    
+    scenario_display_names = {
+        'fast': '⚡ Быстрая',
+        'reflection': '🔄 С рефлексией',
+        'cleaning': '🧹 С очисткой',
+        'structured': '🔍 Структурированная'
+    }
+    
+    for scenario, display_name in scenario_display_names.items():
+        prefix = "✅ " if scenario == current_default else "⚪ "
+        buttons.append([InlineKeyboardButton(
+            f"{prefix}{display_name}",
+            callback_data=f"set_default_scenario:{scenario}"
         )])
     
     buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="ai_provider_settings")])
@@ -380,3 +464,124 @@ def ollama_model_selection_keyboard(available_models: List[str], current_model: 
     buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="select_ai_provider")])
     
     return InlineKeyboardMarkup(buttons)
+
+# Новые упрощенные клавиатуры для улучшения UX
+
+def quick_actions_keyboard(selected_chat_id: str = None):
+    """Меню быстрых действий"""
+    keyboard = []
+    
+    if selected_chat_id:
+        # Если чат выбран - показываем действия для него
+        keyboard.extend([
+            [InlineKeyboardButton("📝 Создать суммаризацию", callback_data=f"quick_create_{selected_chat_id}")],
+            [InlineKeyboardButton("📋 Посмотреть суммаризации", callback_data=f"check_summary_{selected_chat_id}")],
+            [InlineKeyboardButton("🔄 Загрузить сообщения", callback_data=f"load_messages_{selected_chat_id}")]
+        ])
+    else:
+        # Предлагаем выбрать чат
+        keyboard.append([InlineKeyboardButton("📊 Выбрать чат", callback_data="select_chat_for_action")])
+    
+    keyboard.append([InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(keyboard)
+
+def chat_quick_menu_keyboard(vk_chat_id: str):
+    """Упрощенное меню чата"""
+    keyboard = [
+        # Основные действия в одну строку
+        [
+            InlineKeyboardButton("📝 Создать", callback_data=f"quick_create_{vk_chat_id}"),
+            InlineKeyboardButton("📋 Смотреть", callback_data=f"check_summary_{vk_chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🔄 Загрузить", callback_data=f"load_messages_{vk_chat_id}"),
+            InlineKeyboardButton("📊 Статистика", callback_data=f"chat_stats_{vk_chat_id}")
+        ],
+        # Дополнительно
+        [InlineKeyboardButton("📤 Опубликовать", callback_data=f"publish_menu_{vk_chat_id}")],
+        [InlineKeyboardButton("🔙 Мои чаты", callback_data="back_to_main")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def create_summary_keyboard(vk_chat_id: str, available_dates: list, show_all: bool = False):
+    """Меню создания суммаризации"""
+    keyboard = []
+    
+    # Показываем последние 3 даты или все
+    dates_to_show = available_dates if show_all else available_dates[:3]
+    
+    for date in dates_to_show:
+        date_str = date.date if hasattr(date, 'date') else date['date']
+        count = date.count if hasattr(date, 'count') else date['count']
+        keyboard.append([InlineKeyboardButton(
+            f"📅 {date_str} ({count} сообщений)", 
+            callback_data=f"create_for_date_{vk_chat_id}_{date_str}"
+        )])
+    
+    # Больше дат (только если не показываем все)
+    if not show_all and len(available_dates) > 3:
+        keyboard.append([InlineKeyboardButton("📅 Все даты...", callback_data=f"all_dates_{vk_chat_id}")])
+    
+    # Выбор модели внизу
+    keyboard.append([InlineKeyboardButton("🤖 Сменить модель", callback_data="select_model_for_analysis")])
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=f"quick_chat_{vk_chat_id}")])
+    
+    return InlineKeyboardMarkup(keyboard)
+
+
+def settings_menu_keyboard():
+    """Новое меню для настроек"""
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить чат", callback_data="add_chat")],
+        [InlineKeyboardButton("❌ Удалить чат", callback_data="remove_chat")],
+        [InlineKeyboardButton("🤖 AI провайдеры (детально)", callback_data="ai_provider_settings")],
+        [InlineKeyboardButton("📅 Расписание публикаций", callback_data="schedule_settings")],
+        [InlineKeyboardButton("🔄 Сменить группу", callback_data="change_group")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def publish_format_keyboard(vk_chat_id: str, date: str):
+    """Клавиатура выбора формата публикации"""
+    keyboard = [
+        [InlineKeyboardButton("📝 Markdown формат", callback_data=f"publish_md_{vk_chat_id}_{date}")],
+        [InlineKeyboardButton("🌐 HTML формат", callback_data=f"publish_html_{vk_chat_id}_{date}")],
+        [InlineKeyboardButton("🔙 Назад", callback_data=f"publish_menu_{vk_chat_id}")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def scenario_selection_keyboard(vk_chat_id: str, date: str):
+    """Клавиатура выбора сценария суммаризации"""
+    keyboard = [
+        [InlineKeyboardButton("⚡ Быстрая суммаризация", 
+            callback_data=f"scenario_fast_{vk_chat_id}_{date}")],
+        [InlineKeyboardButton("🔄 С рефлексией", 
+            callback_data=f"scenario_reflection_{vk_chat_id}_{date}")],
+        [InlineKeyboardButton("🧹 С очисткой данных", 
+            callback_data=f"scenario_cleaning_{vk_chat_id}_{date}")],
+        [InlineKeyboardButton("🔍 Структурированный анализ", 
+            callback_data=f"scenario_structured_{vk_chat_id}_{date}")],
+        [InlineKeyboardButton("🔙 Назад", callback_data=f"quick_create_{vk_chat_id}")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def model_selection_for_summary_keyboard(vk_chat_id: str, date: str, scenario: str):
+    """Клавиатура выбора модели с возможностью быстрого запуска"""
+    keyboard = [
+        [InlineKeyboardButton("✅ Запустить с текущей моделью", 
+            callback_data=f"run_summary_{vk_chat_id}_{date}_{scenario}")],
+        [InlineKeyboardButton("🤖 Изменить модель", 
+            callback_data=f"change_model_for_summary_{vk_chat_id}_{date}_{scenario}")],
+        [InlineKeyboardButton("🔙 Назад к выбору сценария", 
+            callback_data=f"create_for_date_{vk_chat_id}_{date}")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def summary_result_keyboard(vk_chat_id: str, date: str):
+    """Клавиатура для результата суммаризации"""
+    keyboard = [
+        [InlineKeyboardButton("📤 Опубликовать в группу", callback_data=f"publish_menu_{vk_chat_id}")],
+        [InlineKeyboardButton("🔙 К чату", callback_data=f"select_chat_{vk_chat_id}")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+    ]
+    return InlineKeyboardMarkup(keyboard)

@@ -32,6 +32,11 @@ class AIService:
             if not provider:
                 raise AIProviderError(f"Не удалось получить провайдер {request.provider_name}")
             
+            # Устанавливаем llm_logger на провайдер если он передан
+            if request.llm_logger and hasattr(provider, 'set_llm_logger'):
+                provider.set_llm_logger(request.llm_logger)
+                logger.info(f"📝 LLM Logger установлен для провайдера {request.provider_name}")
+            
             context = PipelineContext(
                 request=request,
                 provider=provider
@@ -70,20 +75,33 @@ class AIService:
     async def _get_provider(self, provider_name: str, model_id: Optional[str] = None):
         """Получить провайдер"""
         try:
+            print(f"🔍 DEBUG: _get_provider вызван с параметрами:")
+            print(f"   provider_name: {provider_name}")
+            print(f"   model_id: {model_id}")
+            logger.info(f"🔍 DEBUG: _get_provider вызван с параметрами:")
+            logger.info(f"   provider_name: {provider_name}")
+            logger.info(f"   model_id: {model_id}")
+            
             if provider_name == 'ollama' and 'ollama' in self.config:
                 provider = self.provider_factory.create_provider(provider_name, self.config['ollama'])
             else:
                 provider = self.provider_factory.create_provider(provider_name, self.config)
             
             if not provider:
+                logger.error(f"❌ Не удалось создать провайдер {provider_name}")
                 return None
             
             if model_id and hasattr(provider, 'set_model'):
+                logger.info(f"🔍 DEBUG: Устанавливаем модель {model_id} для провайдера {provider_name}")
                 provider.set_model(model_id)
+            else:
+                logger.warning(f"⚠️ Провайдер {provider_name} не поддерживает set_model или model_id не указан")
             
             if not await provider.initialize():
+                logger.error(f"❌ Не удалось инициализировать провайдер {provider_name}")
                 return None
             
+            logger.info(f"✅ Провайдер {provider_name} успешно создан и инициализирован")
             return provider
             
         except Exception as e:
@@ -132,10 +150,11 @@ class AIService:
                     is_available = await provider.is_available()
                     provider_info = provider.get_provider_info()
                     
+                    # provider_info is a dict, so we can safely use .get()
                     available_providers.append(ProviderInfo(
                         name=provider_name,
-                        display_name=provider_info.get('display_name', provider_name),
-                        description=provider_info.get('description', ''),
+                        display_name=provider_info.get('display_name', provider_name) if isinstance(provider_info, dict) else provider_name,
+                        description=provider_info.get('description', '') if isinstance(provider_info, dict) else '',
                         available=is_available
                     ))
             

@@ -11,7 +11,7 @@ class BotConfig(BaseConfig):
     admin_user_ids: List[int] = Field(default_factory=list)
     max_message_length: int = Field(default=4096)
     max_messages_per_load: int = Field(default=1000)
-    log_level: str = Field(default="DEBUG")
+    log_level: str = Field(default="INFO")
     log_format: str = Field(default="[%(asctime)s] [%(levelname)s] %(message)s")
     special_users: Dict[int, str] = Field(default_factory=dict)
     
@@ -21,7 +21,7 @@ class BotConfig(BaseConfig):
         self.vk_max_token = os.getenv("VK_MAX_TOKEN", "your_vk_max_token")
         self.max_message_length = int(os.getenv("MAX_MESSAGE_LENGTH", "4096"))
         self.max_messages_per_load = int(os.getenv("MAX_MESSAGES_PER_LOAD", "1000"))
-        self.log_level = os.getenv("LOG_LEVEL", "DEBUG")
+        self.log_level = os.getenv("LOG_LEVEL", "INFO")
         self.log_format = os.getenv("LOG_FORMAT", "[%(asctime)s] [%(levelname)s] %(message)s")
         
         self.special_users = {

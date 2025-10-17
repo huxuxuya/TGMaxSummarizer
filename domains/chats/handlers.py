@@ -79,11 +79,11 @@ class ChatHandlers:
                 return
             
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.chat_list_keyboard(chats)
+            keyboard = keyboards.chat_list_keyboard(chats, context="quick")  # ИЗМЕНЕНО
             
             chat_list_text = "📋 Список чатов VK MAX:\n\n"
             for chat in chats:
-                chat_list_text += f"💬 {chat['chat_name']}\n"
+                chat_list_text += f"💬 {chat.chat_name}\n"
             
             await query.edit_message_text(
                 chat_list_text,
@@ -102,7 +102,8 @@ class ChatHandlers:
         await query.answer()
         
         try:
-            vk_chat_id = query.data.split('_')[-1]
+            # ИСПРАВЛЕНО: правильный парсинг vk_chat_id с подчеркиваниями
+            vk_chat_id = query.data.replace('chat_settings_', '', 1)
             
             from infrastructure.telegram import keyboards
             keyboard = keyboards.chat_settings_keyboard(vk_chat_id)
@@ -128,17 +129,19 @@ class ChatHandlers:
         await query.answer()
         
         try:
-            vk_chat_id = query.data.split('_')[-1]
+            # ИСПРАВЛЕНО: правильный парсинг vk_chat_id с подчеркиваниями
+            vk_chat_id = query.data.replace('chat_stats_', '', 1)
             
             stats = self.chat_service.get_chat_stats(vk_chat_id)
             stats_text = format_chat_stats(stats)
             
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.back_keyboard()
+            # Создаем клавиатуру с кнопкой "Назад" к меню чата
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"quick_chat_{vk_chat_id}")]]
             
             await query.edit_message_text(
                 stats_text,
-                reply_markup=keyboard,
+                reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
             
@@ -154,7 +157,8 @@ class ChatHandlers:
         await query.answer()
         
         try:
-            vk_chat_id = query.data.split('_')[-1]
+            # ИСПРАВЛЕНО: правильный парсинг vk_chat_id с подчеркиваниями
+            vk_chat_id = query.data.replace('load_messages_', '', 1)
             
             # Проверяем, есть ли уже сообщения в чате
             last_timestamp = self.chat_service.get_last_message_timestamp(vk_chat_id)
@@ -200,8 +204,11 @@ class ChatHandlers:
             vk_client = VKMaxClient(config['bot'].vk_max_token)
             
             if not await vk_client.connect():
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.chat_quick_menu_keyboard(vk_chat_id)
                 await query.edit_message_text(
-                    "❌ Не удалось подключиться к VK MAX"
+                    "❌ Не удалось подключиться к VK MAX",
+                    reply_markup=keyboard
                 )
                 return
             
@@ -215,8 +222,11 @@ class ChatHandlers:
             
             if not messages:
                 message_type = "новых" if load_only_new else ""
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.chat_quick_menu_keyboard(vk_chat_id)
                 await query.edit_message_text(
-                    f"❌ {'Нет новых сообщений' if load_only_new else 'Не удалось загрузить сообщения'}"
+                    f"❌ {'Нет новых сообщений' if load_only_new else 'Не удалось загрузить сообщения'}",
+                    reply_markup=keyboard
                 )
                 return
             
@@ -225,16 +235,22 @@ class ChatHandlers:
             saved_count = self.chat_service.save_messages(formatted_messages)
             
             message_type = "новых" if load_only_new else ""
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.chat_quick_menu_keyboard(vk_chat_id)
             await query.edit_message_text(
                 format_success_message(
                     f"Загружено {saved_count} {message_type} сообщений"
-                )
+                ),
+                reply_markup=keyboard
             )
             
         except Exception as e:
             logger.error(f"Ошибка в _load_messages_worker: {e}")
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.chat_quick_menu_keyboard(vk_chat_id)
             await query.edit_message_text(
-                format_error_message(e)
+                format_error_message(e),
+                reply_markup=keyboard
             )
     
     async def remove_chat_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -281,7 +297,22 @@ class ChatHandlers:
         try:
             # Извлекаем chat_id из callback_data
             chat_id = query.data.split('_')[2]
+            user_id = update.effective_user.id
+            group_id = context.user_data.get('selected_group_id')
+            
             context.user_data['selected_chat_id'] = chat_id
+            context.user_data['last_chat_id'] = chat_id
+            
+            # Сохраняем последний открытый чат для пользователя в группе
+            if group_id:
+                from domains.users.service import UserService
+                from core.database.connection import DatabaseConnection
+                from core.config import load_config
+                
+                config = load_config()
+                db_connection = DatabaseConnection(config['database'].path)
+                user_service = UserService(db_connection)
+                user_service.set_last_chat(user_id, group_id, chat_id)
             
             # Получаем информацию о чате
             chat_info = self.chat_service.get_chat(chat_id)
@@ -356,3 +387,150 @@ class ChatHandlers:
             await query.edit_message_text(
                 format_error_message(e)
             )
+    
+    async def quick_chat_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Быстрое меню чата"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # ИСПРАВЛЕНО: правильный парсинг vk_chat_id с подчеркиваниями
+            vk_chat_id = query.data.replace('quick_chat_', '', 1)
+            user_id = update.effective_user.id
+            group_id = context.user_data.get('selected_group_id')
+            
+            context.user_data['selected_chat_id'] = vk_chat_id
+            context.user_data['last_chat_id'] = vk_chat_id  # Сохраняем для быстрых действий
+            
+            # Сохраняем последний открытый чат для пользователя в группе
+            if group_id:
+                from domains.users.service import UserService
+                from core.database.connection import DatabaseConnection
+                from core.config import load_config
+                
+                config = load_config()
+                db_connection = DatabaseConnection(config['database'].path)
+                user_service = UserService(db_connection)
+                user_service.set_last_chat(user_id, group_id, vk_chat_id)
+            
+            chat_info = self.chat_service.get_chat(vk_chat_id)
+            chat_name = chat_info.chat_name if chat_info else f"Чат {vk_chat_id}"
+            
+            stats = self.chat_service.get_chat_stats(vk_chat_id)
+            
+            text = f"💬 Чат: {chat_name}\n\n"
+            text += f"📊 *Статистика:*\n"
+            text += f"• Всего сообщений: {stats.total_messages}\n"
+            text += f"• Дней загружено: {stats.days_count}\n\n"
+            
+            if stats.recent_days:
+                text += "📅 *Последние дни:*\n"
+                for day in stats.recent_days[:3]:
+                    text += f"• {day['date']} ({day['count']} сообщений)\n"
+            
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.chat_quick_menu_keyboard(vk_chat_id)
+            
+            await query.edit_message_text(
+                text,
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в quick_chat_handler: {e}")
+            await query.edit_message_text(
+                format_error_message(e)
+            )
+    
+    async def quick_create_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Быстрое создание суммаризации"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # ИСПРАВЛЕНО: правильный парсинг vk_chat_id с подчеркиваниями
+            vk_chat_id = query.data.replace('quick_create_', '', 1)
+            context.user_data['selected_chat_id'] = vk_chat_id
+            
+            # Получаем доступные даты для анализа
+            from domains.summaries.service import SummaryService
+            from core.database.connection import DatabaseConnection
+            from core.config import load_config
+            
+            config = load_config()
+            db_connection = DatabaseConnection(config['database'].path)
+            summary_service = SummaryService(db_connection)
+            
+            # Получаем даты с сообщениями
+            stats = self.chat_service.get_chat_stats(vk_chat_id)
+            
+            if not stats.recent_days:
+                await query.edit_message_text(
+                    "❌ Нет сообщений для анализа\n\n"
+                    "Сначала загрузите сообщения из VK MAX."
+                )
+                return
+            
+            # Преобразуем в формат для клавиатуры
+            available_dates = []
+            for day in stats.recent_days:
+                available_dates.append({
+                    'date': day['date'],
+                    'count': day['count']
+                })
+            
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.create_summary_keyboard(vk_chat_id, available_dates)
+            
+            chat_info = self.chat_service.get_chat(vk_chat_id)
+            chat_name = chat_info.chat_name if chat_info else f"Чат {vk_chat_id}"
+            
+            # Получаем текущую модель и провайдер
+            current_provider = context.user_data.get('confirmed_provider', 'Не выбрано')
+            current_model = context.user_data.get('selected_model_id', 'Не выбрано')
+            
+            await query.edit_message_text(
+                f"📝 Создание суммаризации\n\n"
+                f"💬 Чат: {chat_name}\n"
+                f"🤖 Провайдер: {current_provider}\n"
+                f"🧠 Модель: {current_model}\n"
+                f"📊 Доступно дат: {len(available_dates)}\n\n"
+                f"Выберите дату для анализа:",
+                reply_markup=keyboard
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в quick_create_handler: {e}")
+            await query.edit_message_text(
+                format_error_message(e)
+            )
+    
+    async def all_dates_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать все доступные даты"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # ИСПРАВЛЕНО: правильный парсинг vk_chat_id с подчеркиваниями
+            vk_chat_id = query.data.replace('all_dates_', '', 1)
+            stats = self.chat_service.get_chat_stats(vk_chat_id)
+            
+            if not stats.recent_days:
+                await query.edit_message_text("❌ Нет доступных дат")
+                return
+            
+            # Показываем все даты (не только 3)
+            available_dates = [{'date': day['date'], 'count': day['count']} for day in stats.recent_days]
+            
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.create_summary_keyboard(vk_chat_id, available_dates, show_all=True)
+            
+            await query.edit_message_text(
+                f"📅 Все доступные даты ({len(available_dates)}):\n\n"
+                "Выберите дату для создания суммаризации:",
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            logger.error(f"Ошибка в all_dates_handler: {e}")
+            await query.edit_message_text(format_error_message(e))

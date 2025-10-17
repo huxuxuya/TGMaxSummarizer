@@ -32,6 +32,9 @@ class UserHandlers:
                 user_model.is_admin
             )
             
+            # Load user preferences into context
+            self.user_service.load_user_preferences_to_context(user.id, context)
+            
             if chat.type == "private":
                 await self._handle_private_start(update, context)
             else:
@@ -57,15 +60,28 @@ class UserHandlers:
             return
         
         if len(user_groups) == 1:
-            group_id = user_groups[0]['group_id']
+            group_id = user_groups[0].group_id
             context.user_data['selected_group_id'] = group_id
             
+            # Получаем список чатов для нового главного меню
+            from domains.chats.service import ChatService
+            from core.database.connection import DatabaseConnection
+            from core.config import load_config
+            
+            config = load_config()
+            db_connection = DatabaseConnection(config['database'].path)
+            chat_service = ChatService(db_connection)
+            
+            # Получаем чаты единственной группы
+            group_id = user_groups[0].group_id
+            chats = chat_service.get_group_vk_chats(group_id)
+            
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.chat_management_keyboard()
+            keyboard = keyboards.main_menu_keyboard(chats_count=len(chats), chats=chats)
             
             await update.effective_message.reply_text(
                 f"👋 Добро пожаловать!\n\n"
-                f"✅ Выбрана группа: {user_groups[0]['group_name']}\n\n"
+                f"✅ Выбрана группа: {user_groups[0].group_name}\n\n"
                 f"📊 Управление чатами VK MAX",
                 reply_markup=keyboard
             )
@@ -148,19 +164,98 @@ class UserHandlers:
         
         try:
             group_id = int(query.data.split('_')[-1])
+            user_id = update.effective_user.id
             context.user_data['selected_group_id'] = group_id
             
+            # Получаем чаты выбранной группы
+            from domains.chats.service import ChatService
+            from core.database.connection import DatabaseConnection
+            from core.config import load_config
+            
+            config = load_config()
+            db_connection = DatabaseConnection(config['database'].path)
+            chat_service = ChatService(db_connection)
+            
+            group_chats = chat_service.get_group_vk_chats(group_id)
+            
+            # Получаем название группы
+            group_info = chat_service.get_group(group_id)
+            group_name = group_info.group_name if group_info else f"Группа {group_id}"
+            
+            # Проверяем, есть ли последний открытый чат для этой группы
+            last_chat_id = self.user_service.get_last_chat(user_id, group_id)
+            
+            if last_chat_id and group_chats:
+                # Проверяем, что последний чат все еще существует в группе
+                chat_exists = any(chat.chat_id == last_chat_id for chat in group_chats)
+                
+                if chat_exists:
+                    # Автоматически открываем последний чат
+                    context.user_data['selected_chat_id'] = last_chat_id
+                    context.user_data['last_chat_id'] = last_chat_id
+                    
+                    # Получаем информацию о чате
+                    chat_info = chat_service.get_chat(last_chat_id)
+                    chat_name = chat_info.chat_name if chat_info else f"Чат {last_chat_id}"
+                    
+                    # Получаем статистику чата
+                    stats = chat_service.get_chat_stats(last_chat_id)
+                    
+                    text = f"✅ Группа: {group_name}\n"
+                    text += f"💬 Чат: {chat_name}\n\n"
+                    text += f"📊 *Статистика:*\n"
+                    text += f"• Всего сообщений: {stats.total_messages}\n"
+                    text += f"• Дней загружено: {stats.days_count}\n\n"
+                    
+                    if stats.recent_days:
+                        text += "📅 *Последние дни:*\n"
+                        for day in stats.recent_days[:3]:
+                            text += f"• {day['date']} ({day['count']} сообщений)\n"
+                    
+                    from infrastructure.telegram import keyboards
+                    keyboard = keyboards.chat_quick_menu_keyboard(last_chat_id)
+                    
+                    await query.edit_message_text(
+                        text,
+                        reply_markup=keyboard,
+                        parse_mode='Markdown'
+                    )
+                    return
+            
+            # Если последнего чата нет или он не существует, показываем главное меню
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.chat_management_keyboard()
+            keyboard = keyboards.main_menu_keyboard(chats_count=len(group_chats), chats=group_chats)
             
             await query.edit_message_text(
-                f"✅ Группа выбрана\n\n"
-                f"📊 Управление чатами VK MAX",
+                f"✅ Группа выбрана: {group_name}\n\n"
+                f"📊 Управление чатами VK MAX\n\n"
+                f"Выберите действие:",
                 reply_markup=keyboard
             )
             
         except Exception as e:
             logger.error(f"Ошибка в select_group_handler: {e}")
+            await query.edit_message_text(
+                format_error_message(e)
+            )
+    
+    async def schedule_settings_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Настройки расписания публикаций"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            from infrastructure.telegram import keyboards
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="settings_menu")]]
+            
+            await query.edit_message_text(
+                "📅 Расписание публикаций\n\n"
+                "⚠️ Функция в разработке\n\n"
+                "Здесь будет возможность настроить автоматическую публикацию суммаризаций по расписанию.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except Exception as e:
+            logger.error(f"Ошибка в schedule_settings_handler: {e}")
             await query.edit_message_text(
                 format_error_message(e)
             )

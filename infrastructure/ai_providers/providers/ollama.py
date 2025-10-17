@@ -27,7 +27,12 @@ class OllamaProvider(BaseAIProvider):
         Args:
             model_name: Название модели (например, 'gemma3:12b')
         """
+        print(f"🔍 DEBUG: OllamaProvider.set_model вызван с model_name: {model_name}")
+        self.logger.info(f"🔍 DEBUG: OllamaProvider.set_model вызван с model_name: {model_name}")
+        
         self.model = model_name
+        print(f"🔍 DEBUG: OllamaProvider.model установлен в: {self.model}")
+        self.logger.info(f"🔍 DEBUG: OllamaProvider.model установлен в: {self.model}")
         self.logger.info(f"🔗 Модель Ollama изменена на: {model_name}")
         
     async def summarize_chat(self, messages: List[Dict], chat_context: Optional[Dict] = None) -> str:

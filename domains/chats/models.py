@@ -75,3 +75,15 @@ class GroupVKChat(BaseModel):
     added_by: int
     added_at: Optional[datetime] = None
 
+class UserGroup(BaseModel):
+    """Связь пользователя с группой"""
+    group_id: int
+    group_name: str
+    is_admin: bool = False
+
+class VKChatInfo(BaseModel):
+    """Информация о VK чате для отображения"""
+    chat_id: str
+    chat_name: str
+    chat_type: ChatType = ChatType.UNKNOWN
+

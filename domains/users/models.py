@@ -19,6 +19,9 @@ class UserPreferences(BaseModel):
     preferred_providers: List[str] = Field(default_factory=lambda: ["gigachat"])
     ollama_model: Optional[str] = None
     openrouter_model: str = "deepseek/deepseek-chat-v3.1:free"
+    confirmed_provider: str = "openrouter"  # NEW
+    selected_model_id: Optional[str] = None  # NEW
+    default_scenario: str = "fast"  # NEW - modular for easy expansion
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     

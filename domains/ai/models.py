@@ -20,6 +20,11 @@ class AnalysisRequest(BaseModel):
     enable_reflection: Optional[bool] = None
     clean_data_first: bool = False
     chat_context: Optional[Dict[str, Any]] = None
+    llm_logger: Optional[Any] = None
+    
+    class Config:
+        # Disable protected namespace warnings for model_* fields
+        protected_namespaces = ()
 
 class AnalysisResult(BaseModel):
     """Результат анализа"""
@@ -31,6 +36,10 @@ class AnalysisResult(BaseModel):
     processing_time: Optional[float] = None
     analysis_type: AnalysisType
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    
+    class Config:
+        # Disable protected namespace warnings for model_* fields
+        protected_namespaces = ()
 
 class ProviderInfo(BaseModel):
     """Информация о провайдере"""

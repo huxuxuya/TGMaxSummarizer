@@ -1,6 +1,6 @@
 from typing import List, Optional
 from .models import User, UserPreferences, UserGroup
-from .repository import UserRepository, UserPreferencesRepository, UserOpenRouterRepository
+from .repository import UserRepository, UserPreferencesRepository, UserOpenRouterRepository, UserLastChatRepository
 from ..chats.repository import GroupUserRepository
 from core.database.connection import DatabaseConnection
 from core.exceptions import ValidationError
@@ -13,11 +13,13 @@ class UserService:
         self.preferences_repo = UserPreferencesRepository(db_connection)
         self.openrouter_repo = UserOpenRouterRepository(db_connection)
         self.group_user_repo = GroupUserRepository(db_connection)
+        self.last_chat_repo = UserLastChatRepository(db_connection)
         
         self.user_repo.create_table()
         self.preferences_repo.create_table()
         self.openrouter_repo.create_table()
         self.group_user_repo.create_table()
+        self.last_chat_repo.create_table()
     
     def create_or_update_user(self, user_id: int, username: str = None, is_admin: bool = False) -> User:
         """Создать или обновить пользователя"""
@@ -64,3 +66,51 @@ class UserService:
     def get_user_openrouter_model(self, user_id: int) -> str:
         """Получить модель OpenRouter пользователя"""
         return self.openrouter_repo.get_user_model(user_id)
+    
+    def set_last_chat(self, user_id: int, group_id: int, chat_id: str) -> bool:
+        """Установить последний открытый чат для пользователя в группе"""
+        return self.last_chat_repo.set_last_chat(user_id, group_id, chat_id)
+    
+    def get_last_chat(self, user_id: int, group_id: int) -> Optional[str]:
+        """Получить последний открытый чат для пользователя в группе"""
+        return self.last_chat_repo.get_last_chat(user_id, group_id)
+    
+    def load_user_preferences_to_context(self, user_id: int, context) -> None:
+        """Загрузить предпочтения пользователя в context.user_data"""
+        preferences = self.get_user_preferences(user_id)
+        if preferences:
+            print(f"🔍 DEBUG: load_user_preferences_to_context для user_id {user_id}:")
+            print(f"   confirmed_provider: {preferences.confirmed_provider}")
+            print(f"   selected_model_id: {preferences.selected_model_id}")
+            print(f"   default_scenario: {preferences.default_scenario}")
+            
+            context.user_data['confirmed_provider'] = preferences.confirmed_provider
+            context.user_data['selected_model_id'] = preferences.selected_model_id
+            context.user_data['default_scenario'] = preferences.default_scenario
+        else:
+            print(f"🔍 DEBUG: Нет предпочтений для user_id {user_id}")
+    
+    def save_user_ai_settings(self, user_id: int, provider: str = None, model_id: str = None, scenario: str = None) -> bool:
+        """Сохранить настройки AI пользователя (частичное обновление)"""
+        preferences = self.get_user_preferences(user_id)
+        if not preferences:
+            preferences = UserPreferences(user_id=user_id)
+
+        # Обновляем только переданные параметры
+        if provider is not None:
+            preferences.confirmed_provider = provider
+        if model_id is not None:
+            preferences.selected_model_id = model_id
+        if scenario is not None:
+            preferences.default_scenario = scenario
+
+        return self.update_user_preferences(preferences)
+    
+    def clear_user_ai_settings(self, user_id: int) -> bool:
+        """Очистить настройки AI пользователя"""
+        try:
+            self.preferences_repo.delete_preferences(user_id)
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка очистки настроек пользователя {user_id}: {e}")
+            return False

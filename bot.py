@@ -1,12 +1,13 @@
 import asyncio
 import logging
+import os
 from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
-from core.config import load_config
-from core.database.connection import DatabaseConnection
+from core.app_context import get_app_context
 from domains.handlers_manager import HandlersManager
 from shared.constants import CallbackActions
+from shared.validators import setup_development_validation
 
 def setup_logging(config):
     """Настройка логирования"""
@@ -20,17 +21,19 @@ class VKMaxTelegramBot:
     """Основной класс Telegram бота с новой архитектурой"""
     
     def __init__(self):
-        self.config = load_config()
-        self.db_connection = DatabaseConnection(self.config['database'].path)
+        self.ctx = get_app_context()
         self.handlers_manager = HandlersManager()
         self.application = None
         
-        setup_logging(self.config)
+        setup_logging(self.ctx.config)
         self.logger = logging.getLogger(__name__)
     
     def create_application(self):
         """Создать приложение Telegram"""
-        self.application = Application.builder().token(self.config['bot'].telegram_bot_token).build()
+        # Оптимизированные настройки для быстрой работы
+        self.application = Application.builder().token(
+            self.ctx.config['bot'].telegram_bot_token
+        ).connection_pool_size(8).read_timeout(30).write_timeout(30).connect_timeout(10).build()
         
         self.application.add_handler(CommandHandler("start", self.handlers_manager.start_handler))
         self.application.add_handler(CallbackQueryHandler(self.handlers_manager.callback_query_handler))
@@ -88,24 +91,30 @@ class VKMaxTelegramBot:
         if self.application:
             await self.application.stop()
             await self.application.shutdown()
+        
+        # Cleanup app context
+        self.ctx.shutdown()
         self.logger.info("🛑 Бот остановлен")
 
 async def main():
     """Главная функция"""
-    config = load_config()
     logger = logging.getLogger(__name__)
+    
+    # Setup development validation if enabled
+    setup_development_validation()
     
     logger.info("🤖 Инициализация VK MAX Telegram Bot")
     
-    if config['bot'].telegram_bot_token == "your_bot_token":
+    ctx = get_app_context()
+    if ctx.config['bot'].telegram_bot_token == "your_bot_token":
         logger.error("❌ Не установлен TELEGRAM_BOT_TOKEN")
         return
     
-    if config['bot'].vk_max_token == "your_vk_max_token":
+    if ctx.config['bot'].vk_max_token == "your_vk_max_token":
         logger.error("❌ Не установлен VK_MAX_TOKEN")
         return
     
-    if not config['ai'].providers['gigachat'].api_key or config['ai'].providers['gigachat'].api_key == "your_gigachat_key":
+    if not ctx.config['ai'].providers['gigachat'].api_key or ctx.config['ai'].providers['gigachat'].api_key == "your_gigachat_key":
         logger.warning("⚠️ Не установлен GIGACHAT_API_KEY - анализ чатов может быть недоступен")
     
     bot = VKMaxTelegramBot()

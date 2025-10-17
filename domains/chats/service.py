@@ -1,10 +1,11 @@
 from typing import List, Dict, Any, Optional
-from .models import Chat, Message, ChatStats, Group, GroupUser, GroupVKChat
+from .models import Chat, Message, ChatStats, Group, GroupUser, GroupVKChat, UserGroup, VKChatInfo
 from .repository import (
     ChatRepository, MessageRepository, GroupRepository, 
     GroupUserRepository, GroupVKChatRepository
 )
 from core.database.connection import DatabaseConnection
+from core.database.decorators import transactional
 from core.exceptions import ValidationError
 
 class ChatService:
@@ -35,8 +36,9 @@ class ChatService:
         """Удалить чат"""
         return self.chat_repo.remove_chat(chat_id)
     
+    @transactional
     def save_messages(self, messages_data: List[Dict[str, Any]]) -> int:
-        """Сохранить сообщения"""
+        """Сохранить сообщения в одной транзакции"""
         from .models import Message, MessageType
         
         messages = []
@@ -98,17 +100,19 @@ class ChatService:
         """Добавить пользователя в группу"""
         return self.group_user_repo.add_group_user(group_user)
     
-    def get_user_groups(self, user_id: int) -> List[Dict[str, Any]]:
+    def get_user_groups(self, user_id: int) -> List[UserGroup]:
         """Получить группы пользователя"""
-        return self.group_user_repo.get_user_groups(user_id)
+        groups_data = self.group_user_repo.get_user_groups(user_id)
+        return [UserGroup(**group) for group in groups_data]
     
     def add_group_vk_chat(self, group_vk_chat: GroupVKChat) -> bool:
         """Связать группу с чатом VK MAX"""
         return self.group_vk_chat_repo.add_group_vk_chat(group_vk_chat)
     
-    def get_group_vk_chats(self, group_id: int) -> List[Dict[str, Any]]:
+    def get_group_vk_chats(self, group_id: int) -> List[VKChatInfo]:
         """Получить чаты VK MAX для группы"""
-        return self.group_vk_chat_repo.get_group_vk_chats(group_id)
+        chats_data = self.group_vk_chat_repo.get_group_vk_chats(group_id)
+        return [VKChatInfo(**chat) for chat in chats_data]
     
     def remove_group_vk_chat(self, group_id: int, vk_chat_id: str) -> bool:
         """Удалить связь группы с чатом VK MAX"""
