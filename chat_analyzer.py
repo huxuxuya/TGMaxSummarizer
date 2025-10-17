@@ -1083,7 +1083,7 @@ class ChatAnalyzer:
     
     def _filter_by_classification(self, messages: List[Dict], classification: List[Dict]) -> List[Dict]:
         """
-        Фильтрует сообщения по результатам классификации, исключая irrelevant
+        Фильтрует сообщения по результатам классификации, исключая irrelevant и release_pickup
         
         Args:
             messages: Исходные сообщения
@@ -1096,13 +1096,16 @@ class ChatAnalyzer:
             # Создаем словарь классификации для быстрого поиска
             classification_dict = {item.get('message_id', item.get('id')): item.get('class') for item in classification}
             
+            # Классы сообщений, которые нужно исключить из суммаризации
+            excluded_classes = {'irrelevant', 'release_pickup'}
+            
             # Фильтруем сообщения
             relevant_messages = []
             for msg in messages:
                 message_id = str(msg.get('message_id', msg.get('id', '')))
                 msg_class = classification_dict.get(message_id)
                 
-                if msg_class and msg_class != 'irrelevant':
+                if msg_class and msg_class not in excluded_classes:
                     relevant_messages.append(msg)
             
             logger.info(f"✅ Фильтрация завершена: {len(relevant_messages)} релевантных из {len(messages)} сообщений")
