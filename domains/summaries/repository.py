@@ -41,11 +41,14 @@ class SummaryRepository(BaseRepository):
                 model_id, scenario_type, generation_time_seconds
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
+        # Handle both enum and string types for summary_type
+        summary_type_value = summary.summary_type.value if hasattr(summary.summary_type, 'value') else str(summary.summary_type)
+        
         affected = self.execute_update(query, (
             summary.vk_chat_id,
             summary.date,
             summary.summary_text,
-            summary.summary_type.value,
+            summary_type_value,
             summary.reflection_text,
             summary.improved_summary_text,
             summary.provider_name,
@@ -68,7 +71,9 @@ class SummaryRepository(BaseRepository):
             FROM summaries
             WHERE vk_chat_id = ? AND date = ? AND summary_type = ?
         """
-        results = self.execute_query(query, (vk_chat_id, date, summary_type.value))
+        # Handle both enum and string types for summary_type
+        summary_type_value = summary_type.value if hasattr(summary_type, 'value') else str(summary_type)
+        results = self.execute_query(query, (vk_chat_id, date, summary_type_value))
         if results:
             row = results[0]
             return Summary(
@@ -98,7 +103,9 @@ class SummaryRepository(BaseRepository):
             FROM summaries
             WHERE vk_chat_id = ? AND date = ? AND summary_type = ?
         """
-        results = self.execute_query(query, (vk_chat_id, date, summary_type.value))
+        # Handle both enum and string types for summary_type
+        summary_type_value = summary_type.value if hasattr(summary_type, 'value') else str(summary_type)
+        results = self.execute_query(query, (vk_chat_id, date, summary_type_value))
         if results:
             row = results[0]
             return {
@@ -130,9 +137,12 @@ class SummaryRepository(BaseRepository):
             SET provider_name = ?, provider_version = ?, processing_time = ?, updated_at = CURRENT_TIMESTAMP
             WHERE vk_chat_id = ? AND date = ? AND summary_type = ?
         """
+        # Handle both enum and string types for summary_type
+        summary_type_value = summary_type.value if hasattr(summary_type, 'value') else str(summary_type)
+        
         affected = self.execute_update(query, (
             provider_name, provider_version, processing_time, 
-            vk_chat_id, date, summary_type.value
+            vk_chat_id, date, summary_type_value
         ))
         return affected > 0
 

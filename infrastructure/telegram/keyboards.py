@@ -580,7 +580,8 @@ def model_selection_for_summary_keyboard(vk_chat_id: str, date: str, scenario: s
 def summary_result_keyboard(vk_chat_id: str, date: str):
     """Клавиатура для результата суммаризации"""
     keyboard = [
-        [InlineKeyboardButton("📤 Опубликовать в группу", callback_data=f"publish_menu_{vk_chat_id}")],
+        [InlineKeyboardButton("📤 Опубликовать (Markdown)", callback_data=f"publish_md_{vk_chat_id}_{date}")],
+        [InlineKeyboardButton("📤 Опубликовать (HTML)", callback_data=f"publish_html_{vk_chat_id}_{date}")],
         [InlineKeyboardButton("🔙 К чату", callback_data=f"select_chat_{vk_chat_id}")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
     ]

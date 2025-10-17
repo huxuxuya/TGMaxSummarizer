@@ -47,7 +47,7 @@ class SummaryHandlers:
             )
             
         except Exception as e:
-            logger.error(f"Ошибка в check_summary_handler: {e}")
+            logger.error(f"Ошибка в check_summary_handler: {e}", exc_info=True)
             await query.edit_message_text(
                 format_error_message(e)
             )
@@ -91,7 +91,7 @@ class SummaryHandlers:
             )
             
         except Exception as e:
-            logger.error(f"Ошибка в select_date_handler: {e}")
+            logger.error(f"Ошибка в select_date_handler: {e}", exc_info=True)
             await query.edit_message_text(
                 format_error_message(e)
             )
@@ -130,7 +130,7 @@ class SummaryHandlers:
             )
             
         except Exception as e:
-            logger.error(f"Ошибка в publish_summary_handler: {e}")
+            logger.error(f"Ошибка в publish_summary_handler: {e}", exc_info=True)
             await query.edit_message_text(
                 format_error_message(e)
             )
@@ -169,7 +169,7 @@ class SummaryHandlers:
             )
             
         except Exception as e:
-            logger.error(f"Ошибка в publish_summary_html_handler: {e}")
+            logger.error(f"Ошибка в publish_summary_html_handler: {e}", exc_info=True)
             await query.edit_message_text(
                 format_error_message(e)
             )
@@ -203,7 +203,8 @@ class SummaryHandlers:
             
             from infrastructure.telegram import sender
             from infrastructure.telegram import formatter
-            from shared.utils import format_summary_for_telegram_html_universal
+            from infrastructure.telegram.sender import ParseMode
+            from utils import format_summary_for_telegram_html_universal
             
             if use_html:
                 formatted_parts = format_summary_for_telegram_html_universal(
@@ -211,15 +212,15 @@ class SummaryHandlers:
                     date, 
                     summary.vk_chat_id
                 )
-                parse_mode = 'HTML'
+                parse_mode = ParseMode.HTML
             else:
-                from shared.utils import format_summary_for_telegram
+                from utils import format_summary_for_telegram
                 formatted_parts = format_summary_for_telegram(
                     summary.summary_text, 
                     date, 
                     summary.vk_chat_id
                 )
-                parse_mode = 'MarkdownV2'
+                parse_mode = ParseMode.MARKDOWN_V2
             
             for part in formatted_parts:
                 await sender.TelegramMessageSender.safe_send_message(
@@ -236,7 +237,7 @@ class SummaryHandlers:
             )
             
         except Exception as e:
-            logger.error(f"Ошибка в publish_to_group_handler: {e}")
+            logger.error(f"Ошибка в publish_to_group_handler: {e}", exc_info=True)
             await query.edit_message_text(
                 format_error_message(e)
             )
@@ -276,7 +277,7 @@ class SummaryHandlers:
             )
             
         except Exception as e:
-            logger.error(f"Ошибка в create_for_date_handler: {e}")
+            logger.error(f"Ошибка в create_for_date_handler: {e}", exc_info=True)
             await query.edit_message_text(
                 format_error_message(e)
             )
@@ -304,8 +305,10 @@ class SummaryHandlers:
             keyboard = []
             for summary in summaries[:10]:
                 date_str = summary.date
+                # Handle both enum and string types for summary_type
+                summary_type_display = summary.summary_type.value if hasattr(summary.summary_type, 'value') else str(summary.summary_type)
                 keyboard.append([InlineKeyboardButton(
-                    f"📅 {date_str} ({summary.summary_type.value})",
+                    f"📅 {date_str} ({summary_type_display})",
                     callback_data=f"select_publish_date_{vk_chat_id}_{date_str}"
                 )])
             
@@ -317,7 +320,7 @@ class SummaryHandlers:
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         except Exception as e:
-            logger.error(f"Ошибка в publish_menu_handler: {e}")
+            logger.error(f"Ошибка в publish_menu_handler: {e}", exc_info=True)
             await query.edit_message_text(format_error_message(e))
     
     async def select_publish_date_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -343,7 +346,7 @@ class SummaryHandlers:
                 reply_markup=keyboard
             )
         except Exception as e:
-            logger.error(f"Ошибка в select_publish_date_handler: {e}")
+            logger.error(f"Ошибка в select_publish_date_handler: {e}", exc_info=True)
             await query.edit_message_text(format_error_message(e))
     
     async def select_scenario_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -405,7 +408,7 @@ class SummaryHandlers:
                 await self._show_model_selection_for_scenario(update, context)
             
         except Exception as e:
-            logger.error(f"Ошибка в select_scenario_handler: {e}")
+            logger.error(f"Ошибка в select_scenario_handler: {e}", exc_info=True)
             await query.edit_message_text(format_error_message(e))
 
     async def _show_model_selection_for_scenario(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -488,7 +491,7 @@ class SummaryHandlers:
             await self._run_actual_analysis(query, vk_chat_id, date, scenario, provider, model)
             
         except Exception as e:
-            logger.error(f"Ошибка в run_summary_handler: {e}")
+            logger.error(f"Ошибка в run_summary_handler: {e}", exc_info=True)
             await query.edit_message_text(format_error_message(e))
     
     async def _run_actual_analysis(self, query, vk_chat_id: str, date: str, scenario: str, provider: str, model: str):
