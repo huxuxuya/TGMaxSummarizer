@@ -600,7 +600,7 @@ class OpenRouterProvider(BaseAIProvider):
         """
         try:
             # Используем централизованный промпт
-            from prompts import PromptTemplates
+            from shared.prompts import PromptTemplates
             prompt = PromptTemplates.get_summarization_prompt(text, 'openrouter')
 
             data = {

@@ -263,7 +263,7 @@ class OllamaProvider(BaseAIProvider):
                 prompt = text
             else:
                 # Для суммаризации используем централизованный промпт
-                from prompts import PromptTemplates
+                from shared.prompts import PromptTemplates
                 prompt = PromptTemplates.get_summarization_prompt(text, 'ollama')
 
             self.logger.info(f"🔗 Отправляем запрос в Ollama")

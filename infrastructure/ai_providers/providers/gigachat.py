@@ -327,7 +327,7 @@ class GigaChatProvider(BaseAIProvider):
             Summarization result or None on error
         """
         # Используем централизованный промпт
-        from prompts import PromptTemplates
+        from shared.prompts import PromptTemplates
         prompt = PromptTemplates.get_summarization_prompt(text, 'gigachat')
 
         # Execute API call with summarization prompt

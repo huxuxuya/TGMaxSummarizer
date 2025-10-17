@@ -206,7 +206,7 @@ class ChatGPTProvider(BaseAIProvider):
         """
         try:
             # Используем централизованный промпт
-            from prompts import PromptTemplates
+            from shared.prompts import PromptTemplates
             prompt = PromptTemplates.get_summarization_prompt(text, 'chatgpt')
 
             self.logger.info(f"🔗 Отправляем запрос в ChatGPT")
