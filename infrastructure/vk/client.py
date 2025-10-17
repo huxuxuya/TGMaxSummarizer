@@ -205,7 +205,16 @@ class VKMaxClient:
                     break
             
             logger.info(f"✅ Загружено {len(all_messages)} сообщений")
-            return [VKMessage(**msg) for msg in all_messages]
+            
+            # Преобразуем сырые данные в объекты VKMessage
+            vk_messages = []
+            for msg in all_messages:
+                # Переименовываем 'attaches' в 'attachments' для совместимости с моделью
+                if 'attaches' in msg:
+                    msg['attachments'] = msg.pop('attaches')
+                vk_messages.append(VKMessage(**msg))
+            
+            return vk_messages
             
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки сообщений чата: {e}")

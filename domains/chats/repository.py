@@ -63,6 +63,7 @@ class MessageRepository(BaseRepository):
                 attachments TEXT,
                 reaction_info TEXT,
                 image_paths TEXT,
+                image_analysis TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(vk_chat_id, message_id)
             )
@@ -73,8 +74,8 @@ class MessageRepository(BaseRepository):
         query = """
             INSERT OR IGNORE INTO messages (
                 vk_chat_id, message_id, sender_id, sender_name, text,
-                message_time, date, message_type, attachments, reaction_info, image_paths
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                message_time, date, message_type, attachments, reaction_info, image_paths, image_analysis
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         
         params_list = []
@@ -90,16 +91,34 @@ class MessageRepository(BaseRepository):
                 msg.message_type.value,
                 json.dumps(msg.attachments),
                 json.dumps(msg.reaction_info),
-                json.dumps(msg.image_paths)
+                json.dumps(msg.image_paths),
+                json.dumps(msg.image_analysis)
             ))
         
         return self.execute_many(query, params_list)
+    
+    def _row_to_message(self, row, vk_chat_id: str = None, date: str = None) -> Message:
+        """Преобразовать строку БД в объект Message"""
+        return Message(
+            message_id=row['message_id'],
+            vk_chat_id=vk_chat_id or row.get('vk_chat_id', ''),
+            sender_id=row['sender_id'],
+            sender_name=row['sender_name'],
+            text=row['text'],
+            message_time=row['message_time'],
+            date=date or row.get('date', ''),
+            message_type=row['message_type'],
+            attachments=json.loads(row['attachments']) if row['attachments'] else [],
+            reaction_info=json.loads(row['reaction_info']) if row['reaction_info'] else {},
+            image_paths=json.loads(row['image_paths']) if row['image_paths'] else [],
+            image_analysis=json.loads(row['image_analysis']) if row.get('image_analysis') else []
+        )
     
     def get_messages_by_date(self, vk_chat_id: str, date: str) -> List[Message]:
         """Получить сообщения за определенную дату"""
         query = """
             SELECT message_id, sender_id, sender_name, text, message_time, 
-                   message_type, attachments, reaction_info, image_paths
+                   message_type, attachments, reaction_info, image_paths, image_analysis
             FROM messages 
             WHERE vk_chat_id = ? AND date = ?
             ORDER BY message_time ASC
@@ -108,20 +127,7 @@ class MessageRepository(BaseRepository):
         
         messages = []
         for row in results:
-            message = Message(
-                message_id=row['message_id'],
-                vk_chat_id=vk_chat_id,
-                sender_id=row['sender_id'],
-                sender_name=row['sender_name'],
-                text=row['text'],
-                message_time=row['message_time'],
-                date=date,
-                message_type=row['message_type'],
-                attachments=json.loads(row['attachments']) if row['attachments'] else [],
-                reaction_info=json.loads(row['reaction_info']) if row['reaction_info'] else {},
-                image_paths=json.loads(row['image_paths']) if row['image_paths'] else []
-            )
-            messages.append(message)
+            messages.append(self._row_to_message(row, vk_chat_id, date))
         
         return messages
     
@@ -136,6 +142,48 @@ class MessageRepository(BaseRepository):
         results = self.execute_query(query, (vk_chat_id,))
         return results[0]['message_time'] if results else None
     
+    def update_message_analysis(self, message_id: str, image_analysis: List[Dict]) -> bool:
+        """Обновить результаты анализа изображений для сообщения"""
+        query = "UPDATE messages SET image_analysis = ? WHERE message_id = ?"
+        affected = self.execute_update(query, (json.dumps(image_analysis), message_id))
+        return affected > 0
+    
+    def get_messages_with_images(self, vk_chat_id: str, analyzed_only: bool = None) -> List[Message]:
+        """Получить сообщения с изображениями"""
+        if analyzed_only is True:
+            # Только проанализированные
+            query = """
+                SELECT * FROM messages 
+                WHERE vk_chat_id = ? 
+                AND image_paths IS NOT NULL 
+                AND image_paths != '[]'
+                AND image_analysis IS NOT NULL 
+                AND image_analysis != '[]'
+                ORDER BY created_at DESC
+            """
+        elif analyzed_only is False:
+            # Только неанализированные
+            query = """
+                SELECT * FROM messages 
+                WHERE vk_chat_id = ? 
+                AND image_paths IS NOT NULL 
+                AND image_paths != '[]'
+                AND (image_analysis IS NULL OR image_analysis = '[]')
+                ORDER BY created_at DESC
+            """
+        else:
+            # Все с изображениями
+            query = """
+                SELECT * FROM messages 
+                WHERE vk_chat_id = ? 
+                AND image_paths IS NOT NULL 
+                AND image_paths != '[]'
+                ORDER BY created_at DESC
+            """
+        
+        rows = self.execute_query(query, (vk_chat_id,))
+        return [self._row_to_message(row) for row in rows]
+    
     def get_chat_stats(self, vk_chat_id: str) -> ChatStats:
         """Получить статистику чата"""
         total_query = "SELECT COUNT(*) as count FROM messages WHERE vk_chat_id = ?"
@@ -149,15 +197,54 @@ class MessageRepository(BaseRepository):
             LIMIT 5
         """
         
+        # Статистика изображений
+        total_images_query = """
+            SELECT SUM(json_array_length(image_paths)) as count
+            FROM messages 
+            WHERE vk_chat_id = ? 
+            AND image_paths IS NOT NULL 
+            AND image_paths != '[]'
+        """
+        
+        analyzed_images_query = """
+            SELECT SUM(json_array_length(image_analysis)) as count
+            FROM messages 
+            WHERE vk_chat_id = ? 
+            AND image_analysis IS NOT NULL 
+            AND image_analysis != '[]'
+        """
+        
+        recent_analysis_query = """
+            SELECT date, COUNT(*) as analyzed_count
+            FROM messages 
+            WHERE vk_chat_id = ?
+            AND image_analysis IS NOT NULL 
+            AND image_analysis != '[]'
+            GROUP BY date
+            ORDER BY date DESC
+            LIMIT 5
+        """
+        
         total_result = self.execute_query(total_query, (vk_chat_id,))
         days_result = self.execute_query(days_query, (vk_chat_id,))
         recent_result = self.execute_query(recent_query, (vk_chat_id,))
+        
+        total_images_result = self.execute_query(total_images_query, (vk_chat_id,))
+        analyzed_images_result = self.execute_query(analyzed_images_query, (vk_chat_id,))
+        recent_analysis_result = self.execute_query(recent_analysis_query, (vk_chat_id,))
+        
+        total_images = total_images_result[0]['count'] if total_images_result and total_images_result[0]['count'] else 0
+        analyzed_images = analyzed_images_result[0]['count'] if analyzed_images_result and analyzed_images_result[0]['count'] else 0
         
         return ChatStats(
             vk_chat_id=vk_chat_id,
             total_messages=total_result[0]['count'] if total_result else 0,
             days_count=days_result[0]['count'] if days_result else 0,
-            recent_days=[{"date": row['date'], "count": row['message_count']} for row in recent_result]
+            recent_days=[{"date": row['date'], "count": row['message_count']} for row in recent_result],
+            total_images=total_images,
+            analyzed_images=analyzed_images,
+            unanalyzed_images=total_images - analyzed_images,
+            recent_analysis_dates=[{"date": row['date'], "count": row['analyzed_count']} for row in recent_analysis_result]
         )
 
 class GroupRepository(BaseRepository):

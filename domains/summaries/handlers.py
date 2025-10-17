@@ -36,7 +36,7 @@ class SummaryHandlers:
             from infrastructure.telegram import keyboards
             keyboard = keyboards.date_selection_keyboard(available_summaries, vk_chat_id)
             
-            summary_list_text = "📋 Доступные суммаризации:\n\n"
+            summary_list_text = "📋 [Доступные суммаризации]:\n\n"
             for summary in available_summaries[:5]:
                 date_display = format_date_for_display(summary.date)
                 summary_list_text += f"📅 {date_display}\n"
@@ -124,7 +124,7 @@ class SummaryHandlers:
             keyboard = keyboards.date_selection_keyboard(available_summaries, vk_chat_id)
             
             await query.edit_message_text(
-                "📤 Публикация суммаризации\n\n"
+                "📤 [Публикация суммаризации]\n\n"
                 "Выберите дату для публикации:",
                 reply_markup=keyboard
             )
@@ -163,7 +163,7 @@ class SummaryHandlers:
             keyboard = keyboards.date_selection_keyboard(available_summaries, vk_chat_id)
             
             await query.edit_message_text(
-                "📤 Публикация суммаризации (HTML)\n\n"
+                "📤 [Публикация суммаризации] (HTML)\n\n"
                 "Выберите дату для публикации:",
                 reply_markup=keyboard
             )
@@ -315,7 +315,7 @@ class SummaryHandlers:
             keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=f"quick_chat_{vk_chat_id}")])
             
             await query.edit_message_text(
-                "📤 Публикация суммаризации\n\n"
+                "📤 [Публикация суммаризации]\n\n"
                 "Выберите дату суммаризации для публикации:",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -341,7 +341,7 @@ class SummaryHandlers:
             keyboard = keyboards.publish_format_keyboard(vk_chat_id, date)
             
             await query.edit_message_text(
-                f"📤 Публикация суммаризации за {date}\n\n"
+                f"📤 [Публикация суммаризации] за {date}\n\n"
                 "Выберите формат:",
                 reply_markup=keyboard
             )
@@ -437,7 +437,7 @@ class SummaryHandlers:
             keyboard = keyboards.model_selection_for_summary_keyboard(vk_chat_id, date, scenario)
             
             await query.edit_message_text(
-                f"🤖 Выбор модели для суммаризации\n\n"
+                f"🤖 [Выбор модели] для суммаризации\n\n"
                 f"📋 Сценарий: {scenario_names.get(scenario, scenario)}\n"
                 f"📅 Дата: {date}\n\n"
                 f"🤖 Провайдер: {current_provider}\n"

@@ -114,20 +114,24 @@ class ImageDownloader:
         image_urls = []
         
         for attachment in attachments:
-            att_type = attachment.get("type", "").lower()
-            data = attachment.get("data", {})
+            # VK MAX использует _type вместо type
+            att_type = attachment.get("_type", attachment.get("type", "")).upper()
             
-            if att_type == "photo":
-                # Для фотографий ищем URL в разных возможных местах
-                if isinstance(data, dict):
+            if att_type == "PHOTO":
+                # Для VK MAX фотографий ищем baseUrl
+                if "baseUrl" in attachment and attachment["baseUrl"]:
+                    image_urls.append(attachment["baseUrl"])
+                # Также проверяем старую структуру с data
+                elif "data" in attachment and isinstance(attachment["data"], dict):
+                    data = attachment["data"]
                     # Пробуем разные варианты URL
-                    for url_key in ["url", "photo_url", "src", "src_big", "src_small"]:
+                    for url_key in ["url", "photo_url", "src", "src_big", "src_small", "baseUrl"]:
                         if url_key in data and data[url_key]:
                             image_urls.append(data[url_key])
                             break
                     
                     # Если не нашли прямой URL, ищем в подструктурах
-                    if not any(url_key in data for url_key in ["url", "photo_url", "src", "src_big", "src_small"]):
+                    if not any(url_key in data for url_key in ["url", "photo_url", "src", "src_big", "src_small", "baseUrl"]):
                         # Ищем в sizes или других структурах
                         if "sizes" in data and isinstance(data["sizes"], list):
                             for size in data["sizes"]:
@@ -141,10 +145,19 @@ class ImageDownloader:
                                 image_urls.append(value)
                                 break
             
-            elif att_type in ["image", "picture"]:
+            elif att_type in ["IMAGE", "PICTURE"]:
                 # Для других типов изображений
-                if isinstance(data, dict) and "url" in data:
-                    image_urls.append(data["url"])
+                if "baseUrl" in attachment and attachment["baseUrl"]:
+                    image_urls.append(attachment["baseUrl"])
+                elif "data" in attachment and isinstance(attachment["data"], dict) and "url" in attachment["data"]:
+                    image_urls.append(attachment["data"]["url"])
+            
+            elif att_type == "SHARE":
+                # Для shared links с изображениями
+                if "image" in attachment and isinstance(attachment["image"], dict):
+                    image_data = attachment["image"]
+                    if "url" in image_data and image_data["url"]:
+                        image_urls.append(image_data["url"])
         
         return image_urls
     

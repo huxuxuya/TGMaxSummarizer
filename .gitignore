@@ -84,3 +84,6 @@ IMG_*.jpg
 IMG_*.JPG
 IMG_*.png
 IMG_*.PNG
+
+# Скачанные изображения из VK MAX
+images/

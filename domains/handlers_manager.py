@@ -2,6 +2,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from .users.handlers import UserHandlers
 from .chats.handlers import ChatHandlers
+from .chats.image_handlers import ImageAnalysisHandlers
+from .chats.image_analysis_service import ImageAnalysisService
 from .ai.handlers import AIHandlers
 from .summaries.handlers import SummaryHandlers
 from .command_registry import CommandRegistry
@@ -22,6 +24,18 @@ class HandlersManager:
         self.chat_handlers = ChatHandlers(ctx.chat_service)
         self.ai_handlers = AIHandlers(ctx.ai_service, ctx.user_service)
         self.summary_handlers = SummaryHandlers(ctx.summary_service, ctx.user_service)
+        
+        # Создаем сервис анализа изображений
+        self.image_analysis_service = ImageAnalysisService(
+            ollama_base_url=ctx.config['bot'].ollama_base_url,
+            default_model=ctx.config['bot'].default_image_analysis_model,
+            default_prompt=ctx.config['bot'].default_image_analysis_prompt,
+            max_concurrent=ctx.config['bot'].image_analysis_max_concurrent
+        )
+        self.image_handlers = ImageAnalysisHandlers(
+            self.image_analysis_service,
+            ctx.chat_service.message_repo
+        )
         
         # Setup command registry
         self.registry = CommandRegistry()
@@ -56,6 +70,8 @@ class HandlersManager:
         # Pattern matches
         self.registry.register("select_group_*", 
                              self.user_handlers.select_group_handler)
+        self.registry.register("back_to_group_*", 
+                             self._handle_back_to_group)
         self.registry.register("select_provider:*", 
                              self.ai_handlers.select_provider_handler)
         self.registry.register("confirm_provider:*", 
@@ -96,6 +112,20 @@ class HandlersManager:
         self.registry.register("settings_menu", 
                              self._handle_settings_menu)
         
+        # Image analysis handlers
+        self.registry.register("image_analysis_menu_*", 
+                             self.image_handlers.image_analysis_menu_handler)
+        self.registry.register("start_image_analysis_*", 
+                             self.image_handlers.start_image_analysis_handler)
+        self.registry.register("image_analysis_settings_*", 
+                             self.image_handlers.image_analysis_settings_handler)
+        self.registry.register("select_analysis_model_*", 
+                             self.image_handlers.select_analysis_model_handler)
+        self.registry.register("set_analysis_model_*", 
+                             self.image_handlers.set_analysis_model_handler)
+        self.registry.register("change_analysis_prompt_*", 
+                             self.image_handlers.change_analysis_prompt_handler)
+        
         # AI Provider handlers
         self.registry.register("ai_provider_status", 
                              self.ai_handlers.ai_provider_status_handler)
@@ -133,6 +163,20 @@ class HandlersManager:
                              self.summary_handlers.create_for_date_handler)
         self.registry.register("all_dates_*", 
                              self.chat_handlers.all_dates_handler)
+        
+        # Schedule handlers
+        self.registry.register("schedule_management", 
+                             self._handle_schedule_management)
+        self.registry.register("set_schedule", 
+                             self.chat_handlers.set_schedule_handler)
+        self.registry.register("delete_schedule", 
+                             self.chat_handlers.delete_schedule_handler)
+        self.registry.register("show_schedule", 
+                             self.chat_handlers.show_schedule_handler)
+        self.registry.register("select_group_for_schedule_*", 
+                             self._handle_select_group_for_schedule)
+        self.registry.register("back_to_group_menu", 
+                             self._handle_back_to_group_menu)
         
         # User handlers
         self.registry.register("schedule_settings", 
@@ -198,38 +242,61 @@ class HandlersManager:
     async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик текстовых сообщений"""
         message = update.effective_message
+        chat = update.effective_chat
         
-        if message.text.startswith('/'):
-            await message.reply_text(
-                "Используйте кнопки для навигации по боту."
-            )
+        if chat.type in ['group', 'supergroup']:
+            # В группах не реагируем на сообщения, только на команды
+            if message.text.startswith('/'):
+                await message.reply_text(
+                    "Управление расписанием доступно только в личных сообщениях.\n\n"
+                    "Используйте /start в личных сообщениях с ботом."
+                )
         else:
-            await message.reply_text(
-                "Я понимаю только команды. Используйте /start для начала работы."
-            )
+            # В личных сообщениях
+            if message.text.startswith('/'):
+                await message.reply_text(
+                    "Используйте кнопки для навигации по боту."
+                )
+            else:
+                await message.reply_text(
+                    "Я понимаю только команды. Используйте /start для начала работы."
+                )
     
     async def photo_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик фотографий"""
         message = update.effective_message
         
-        if message.caption and "расписание" in message.caption.lower():
+        # Проверяем, загружается ли расписание
+        if context.user_data.get('uploading_schedule'):
+            await self._handle_schedule_photo(update, context)
+        elif message.caption and "расписание" in message.caption.lower():
             await self._handle_schedule_photo(update, context)
         else:
             await message.reply_text(
-                "Фотография получена. Если это расписание, добавьте подпись 'расписание'."
+                "Фотография получена. Если это расписание, добавьте подпись 'расписание' или используйте кнопку 'Установить расписание'."
             )
     
     async def _handle_schedule_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка фото расписания"""
         try:
-            group_id = update.effective_chat.id
+            # Получаем group_id из контекста или из чата
+            group_id = context.user_data.get('schedule_group_id', update.effective_chat.id)
             file_id = update.effective_message.photo[-1].file_id
             
-            success = self.chat_service.set_schedule_photo(group_id, file_id)
+            ctx = get_app_context()
+            success = ctx.chat_service.set_schedule_photo(group_id, file_id)
             
             if success:
+                # Очищаем флаги
+                context.user_data.pop('uploading_schedule', None)
+                context.user_data.pop('schedule_group_id', None)
+                
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.schedule_management_keyboard()
+                
                 await update.effective_message.reply_text(
-                    "✅ Фото расписания сохранено"
+                    "✅ Фото расписания сохранено",
+                    reply_markup=keyboard
                 )
             else:
                 await update.effective_message.reply_text(
@@ -242,6 +309,276 @@ class HandlersManager:
                 "❌ Ошибка при сохранении фото расписания"
             )
     
+    async def schedule_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /schedule"""
+        try:
+            chat = update.effective_chat
+            
+            # Проверяем, что это группа
+            if chat.type in ['group', 'supergroup']:
+                await update.message.reply_text(
+                    "❌ Управление расписанием доступно только в личных сообщениях.\n\n"
+                    "Используйте /start в личных сообщениях с ботом."
+                )
+                return
+            
+            # В личных сообщениях показываем меню расписания
+            user_id = update.effective_user.id
+            ctx = get_app_context()
+            user_groups = ctx.user_service.get_user_groups(user_id)
+            
+            if not user_groups:
+                await update.message.reply_text(
+                    "❌ У вас нет доступных групп\n\n"
+                    "Добавьте бота в группу и сделайте его администратором."
+                )
+                return
+            
+            if len(user_groups) == 1:
+                # Показываем меню расписания для единственной группы
+                group = user_groups[0]
+                context.user_data['selected_group_id'] = group.group_id
+                
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.schedule_management_keyboard()
+                has_schedule = ctx.chat_service.get_schedule_photo(group.group_id) is not None
+                status_text = "✅ Расписание установлено" if has_schedule else "❌ Расписание не установлено"
+                
+                await update.message.reply_text(
+                    f"📅 *[Управление расписанием]*\n\n"
+                    f"[Группа]: {group.group_name}\n"
+                    f"Статус: {status_text}\n\n"
+                    f"Выберите действие:",
+                    reply_markup=keyboard,
+                    parse_mode='Markdown'
+                )
+            else:
+                # Показываем выбор групп
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.group_selection_for_schedule_keyboard(user_groups)
+                
+                await update.message.reply_text(
+                    "📅 *[Управление расписанием]*\n\n"
+                    "[Выберите группу] для управления расписанием:",
+                    reply_markup=keyboard,
+                    parse_mode='Markdown'
+                )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в schedule_command_handler: {e}")
+            await update.message.reply_text(
+                "❌ Ошибка при получении расписания"
+            )
+    
+    async def menu_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /menu"""
+        try:
+            chat = update.effective_chat
+            
+            # Проверяем, что это группа
+            if chat.type in ['group', 'supergroup']:
+                await update.message.reply_text(
+                    "❌ Управление расписанием доступно только в личных сообщениях.\n\n"
+                    "Используйте /start в личных сообщениях с ботом."
+                )
+                return
+            
+            # В личных сообщениях показываем главное меню
+            user_id = update.effective_user.id
+            ctx = get_app_context()
+            user_groups = ctx.user_service.get_user_groups(user_id)
+            
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.main_menu_keyboard(chats=user_groups)
+            
+            if user_groups:
+                group_name = user_groups[0].group_name
+                await update.message.reply_text(
+                    f"🏠 [Главное меню]\n\n"
+                    f"✅ [Группа]: {group_name}\n\n"
+                    f"Выберите действие:",
+                    reply_markup=keyboard
+                )
+            else:
+                await update.message.reply_text(
+                    "🏠 [Главное меню]\n\n"
+                    "[Выберите группу] для работы:",
+                    reply_markup=keyboard
+                )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в menu_command_handler: {e}")
+            await update.message.reply_text(
+                "❌ Ошибка при открытии меню"
+            )
+    
+    async def help_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /help"""
+        try:
+            chat = update.effective_chat
+            
+            if chat.type in ['group', 'supergroup']:
+                # В группах показываем информацию о перенаправлении
+                await update.message.reply_text(
+                    "🤖 *Помощь по боту*\n\n"
+                    "Управление расписанием доступно только в личных сообщениях.\n\n"
+                    "Используйте /start в личных сообщениях с ботом для доступа ко всем функциям.",
+                    parse_mode='Markdown'
+                )
+            else:
+                # В личных сообщениях показываем общую справку
+                await update.message.reply_text(
+                    "🤖 *Помощь по боту*\n\n"
+                    "Этот бот помогает управлять чатами VK MAX и создавать суммаризации.\n\n"
+                    "*Основные функции:*\n"
+                    "• 📊 Управление чатами VK MAX\n"
+                    "• 📝 Создание суммаризаций\n"
+                    "• 🤖 Настройка AI моделей\n"
+                    "• 📅 Управление расписанием групп\n"
+                    "• 🖼️ Анализ изображений\n\n"
+                    "Используйте /start для начала работы.",
+                    parse_mode='Markdown'
+                )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в help_command_handler: {e}")
+            await update.message.reply_text(
+                "❌ Ошибка при показе справки"
+            )
+    
+    async def _handle_schedule_management(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик меню управления расписанием"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Получаем выбранную группу из контекста
+            selected_group_id = context.user_data.get('selected_group_id')
+            
+            if not selected_group_id:
+                await query.edit_message_text(
+                    "❌ Группа не выбрана\n\n"
+                    "Сначала выберите группу в главном меню."
+                )
+                return
+            
+            # Получаем информацию о группе через контекст
+            ctx = get_app_context()
+            group = ctx.chat_service.get_group(selected_group_id)
+            if not group:
+                await query.edit_message_text(
+                    "❌ Группа не найдена"
+                )
+                return
+            
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.schedule_management_keyboard()
+            
+            # Проверяем, есть ли уже расписание
+            has_schedule = ctx.chat_service.get_schedule_photo(selected_group_id) is not None
+            status_text = "✅ Расписание установлено" if has_schedule else "❌ Расписание не установлено"
+            
+            await query.edit_message_text(
+                f"📅 *[Управление расписанием]*\n\n"
+                f"[Группа]: {group.group_name}\n"
+                f"Статус: {status_text}\n\n"
+                f"Выберите действие:",
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_schedule_management: {e}")
+            await query.edit_message_text(
+                "❌ Ошибка при открытии меню расписания"
+            )
+    
+    async def _handle_back_to_group_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик возврата к главному меню группы"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Получаем выбранную группу из контекста
+            selected_group_id = context.user_data.get('selected_group_id')
+            
+            if not selected_group_id:
+                await query.edit_message_text(
+                    "❌ Группа не выбрана\n\n"
+                    "Сначала выберите группу в главном меню."
+                )
+                return
+            
+            # Получаем информацию о группе через контекст
+            ctx = get_app_context()
+            group = ctx.chat_service.get_group(selected_group_id)
+            if not group:
+                await query.edit_message_text(
+                    "❌ Группа не найдена"
+                )
+                return
+            
+            # Получаем чаты группы для главного меню
+            user_id = update.effective_user.id
+            user_groups = ctx.user_service.get_user_groups(user_id)
+            
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.main_menu_keyboard(chats=user_groups)
+            
+            await query.edit_message_text(
+                f"🏠 [Главное меню]\n\n"
+                f"✅ [Группа]: {group.group_name}\n\n"
+                f"Выберите действие:",
+                reply_markup=keyboard
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_back_to_group_menu: {e}")
+            await query.edit_message_text(
+                "❌ Ошибка при возврате в главное меню"
+            )
+    
+    async def _handle_select_group_for_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик выбора группы для управления расписанием"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Извлекаем group_id из callback_data
+            group_id = int(query.data.split('_')[-1])
+            context.user_data['selected_group_id'] = group_id
+            
+            # Получаем информацию о группе через контекст
+            ctx = get_app_context()
+            group = ctx.chat_service.get_group(group_id)
+            if not group:
+                await query.edit_message_text(
+                    "❌ Группа не найдена"
+                )
+                return
+            
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.schedule_management_keyboard()
+            
+            # Проверяем, есть ли уже расписание
+            has_schedule = ctx.chat_service.get_schedule_photo(group_id) is not None
+            status_text = "✅ Расписание установлено" if has_schedule else "❌ Расписание не установлено"
+            
+            await query.edit_message_text(
+                f"📅 *[Управление расписанием]*\n\n"
+                f"[Группа]: {group.group_name}\n"
+                f"Статус: {status_text}\n\n"
+                f"Выберите действие:",
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_select_group_for_schedule: {e}")
+            await query.edit_message_text(
+                "❌ Ошибка при выборе группы"
+            )
+    
     async def _handle_cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик отмены"""
         query = update.callback_query
@@ -251,7 +588,7 @@ class HandlersManager:
         keyboard = keyboards.main_menu_keyboard()
         
         await query.edit_message_text(
-            "❌ Операция отменена\n\n"
+            "❌ [Операция отменена]\n\n"
             "Выберите действие:",
             reply_markup=keyboard
         )
@@ -293,8 +630,8 @@ class HandlersManager:
                 keyboard = keyboards.main_menu_keyboard(chats_count=len(group_chats), chats=group_chats)
                 
                 await query.edit_message_text(
-                    f"🏠 Главное меню\n\n"
-                    f"✅ Группа: {user_groups[0].group_name}\n\n"
+                    f"🏠 [Главное меню]\n\n"
+                    f"✅ [Группа]: {user_groups[0].group_name}\n\n"
                     f"Выберите действие:",
                     reply_markup=keyboard
                 )
@@ -304,8 +641,8 @@ class HandlersManager:
                 keyboard = keyboards.group_selection_keyboard(user_groups)
                 
                 await query.edit_message_text(
-                    "🏠 Главное меню\n\n"
-                    "Выберите группу для работы:",
+                    "🏠 [Главное меню]\n\n"
+                    "[Выберите группу] для работы:",
                     reply_markup=keyboard
                 )
             
@@ -376,7 +713,7 @@ class HandlersManager:
             current_model = context.user_data.get('selected_model_id', 'Не выбрано')
             
             await query.edit_message_text(
-                f"📝 Создание суммаризации\n\n"
+                f"📝 [Создание суммаризации]\n\n"
                 f"💬 Чат: {chat_name}\n"
                 f"🤖 Провайдер: {current_provider}\n"
                 f"🧠 Модель: {current_model}\n"
@@ -402,7 +739,7 @@ class HandlersManager:
             keyboard = keyboards.schedule_keyboard()
             
             await query.edit_message_text(
-                "📅 Настройки расписания\n\n"
+                "📅 [Настройки расписания]\n\n"
                 "Функция в разработке...",
                 reply_markup=keyboard
             )
@@ -483,6 +820,51 @@ class HandlersManager:
                 "❌ Произошла ошибка при возврате к управлению чатами"
             )
     
+    async def _handle_back_to_group(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик возврата к меню группы"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Извлекаем group_id из callback_data
+            group_id = int(query.data.split('_')[-1])
+            user_id = update.effective_user.id
+            
+            # Сохраняем выбранную группу в контексте
+            context.user_data['selected_group_id'] = group_id
+            
+            # Получаем чаты выбранной группы
+            from domains.chats.service import ChatService
+            from core.database.connection import DatabaseConnection
+            from core.config import load_config
+            
+            config = load_config()
+            db_connection = DatabaseConnection(config['database'].path)
+            chat_service = ChatService(db_connection)
+            
+            group_chats = chat_service.get_group_vk_chats(group_id)
+            
+            # Получаем название группы
+            group_info = chat_service.get_group(group_id)
+            group_name = group_info.group_name if group_info else f"Группа {group_id}"
+            
+            # Показываем главное меню для группы
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.main_menu_keyboard(chats_count=len(group_chats), chats=group_chats)
+            
+            await query.edit_message_text(
+                f"✅ [Группа выбрана]: {group_name}\n\n"
+                f"📊 [Главное меню] Управление чатами VK MAX\n\n"
+                f"Выберите действие:",
+                reply_markup=keyboard
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_back_to_group: {e}")
+            await query.edit_message_text(
+                "❌ Произошла ошибка при возврате к группе"
+            )
+    
     async def _handle_quick_actions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик быстрых действий"""
         query = update.callback_query
@@ -495,7 +877,7 @@ class HandlersManager:
             from infrastructure.telegram import keyboards
             keyboard = keyboards.quick_actions_keyboard(last_chat_id)
             
-            text = "⚡ Быстрые действия\n\n"
+            text = "⚡ [Быстрые действия]\n\n"
             if last_chat_id:
                 text += f"💬 Последний чат: {last_chat_id}\n"
                 text += "Выберите действие для этого чата:"
@@ -520,13 +902,36 @@ class HandlersManager:
         
         try:
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.settings_menu_keyboard()
             
-            await query.edit_message_text(
-                "⚙️ Настройки\n\n"
-                "Выберите категорию настроек:",
-                reply_markup=keyboard
-            )
+            # Проверяем, есть ли выбранная группа в контексте
+            selected_group_id = context.user_data.get('selected_group_id')
+            
+            if selected_group_id:
+                # Если есть выбранная группа, показываем настройки с информацией о группе
+                keyboard = keyboards.settings_menu_keyboard()
+                
+                # Получаем информацию о группе через контекст
+                ctx = get_app_context()
+                group_info = ctx.chat_service.get_group(selected_group_id)
+                group_name = group_info.group_name if group_info else f"Группа {selected_group_id}"
+                
+                await query.edit_message_text(
+                    f"⚙️ *[Настройки]*\n\n"
+                    f"[Группа]: {group_name}\n\n"
+                    f"Выберите категорию настроек:",
+                    reply_markup=keyboard,
+                    parse_mode='Markdown'
+                )
+            else:
+                # Если нет выбранной группы, показываем обычные настройки
+                keyboard = keyboards.settings_menu_keyboard()
+                
+                await query.edit_message_text(
+                    "⚙️ *[Настройки]*\n\n"
+                    "Выберите категорию настроек:",
+                    reply_markup=keyboard,
+                    parse_mode='Markdown'
+                )
             
         except Exception as e:
             logger.error(f"Ошибка в _handle_settings_menu: {e}")

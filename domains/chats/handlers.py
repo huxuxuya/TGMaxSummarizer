@@ -21,13 +21,31 @@ class ChatHandlers:
         
         try:
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.chat_management_keyboard()
             
-            await query.edit_message_text(
-                "📊 Управление чатами VK MAX\n\n"
-                "Выберите действие:",
-                reply_markup=keyboard
-            )
+            # Проверяем, есть ли выбранная группа в контексте
+            selected_group_id = context.user_data.get('selected_group_id')
+            
+            if selected_group_id:
+                # Если есть выбранная группа, используем клавиатуру для группы
+                keyboard = keyboards.group_chat_management_keyboard(selected_group_id)
+                group_info = self.chat_service.get_group(selected_group_id)
+                group_name = group_info.group_name if group_info else f"Группа {selected_group_id}"
+                
+                await query.edit_message_text(
+                    f"📊 [Управление чатами] VK MAX\n\n"
+                    f"[Группа]: {group_name}\n\n"
+                    f"Выберите действие:",
+                    reply_markup=keyboard
+                )
+            else:
+                # Если нет выбранной группы, используем общую клавиатуру
+                keyboard = keyboards.chat_management_keyboard()
+                
+                await query.edit_message_text(
+                    "📊 [Управление чатами] VK MAX\n\n"
+                    "Выберите действие:",
+                    reply_markup=keyboard
+                )
             
         except Exception as e:
             logger.error(f"Ошибка в manage_chats_handler: {e}")
@@ -45,7 +63,7 @@ class ChatHandlers:
             keyboard = keyboards.chat_add_method_keyboard()
             
             await query.edit_message_text(
-                "➕ Добавление чата VK MAX\n\n"
+                "➕ [Добавление чата] VK MAX\n\n"
                 "Выберите способ добавления:",
                 reply_markup=keyboard
             )
@@ -73,7 +91,7 @@ class ChatHandlers:
             
             if not chats:
                 await query.edit_message_text(
-                    "📋 Список чатов пуст\n\n"
+                    "📋 [Список чатов] пуст\n\n"
                     "Добавьте чаты VK MAX для анализа."
                 )
                 return
@@ -81,7 +99,7 @@ class ChatHandlers:
             from infrastructure.telegram import keyboards
             keyboard = keyboards.chat_list_keyboard(chats, context="quick")  # ИЗМЕНЕНО
             
-            chat_list_text = "📋 Список чатов VK MAX:\n\n"
+            chat_list_text = "📋 [Список чатов] VK MAX:\n\n"
             for chat in chats:
                 chat_list_text += f"💬 {chat.chat_name}\n"
             
@@ -112,7 +130,7 @@ class ChatHandlers:
             chat_name = chat_info.chat_name if chat_info else f"Чат {vk_chat_id}"
             
             await query.edit_message_text(
-                f"⚙️ Настройки чата: {chat_name}\n\n"
+                f"⚙️ [Настройки чата]: {chat_name}\n\n"
                 "Выберите действие:",
                 reply_markup=keyboard
             )
@@ -278,7 +296,7 @@ class ChatHandlers:
             keyboard = keyboards.chat_list_keyboard(chats)
             
             await query.edit_message_text(
-                "❌ Удаление чата\n\n"
+                "❌ [Удаление чата]\n\n"
                 "Выберите чат для удаления:",
                 reply_markup=keyboard
             )
@@ -322,7 +340,8 @@ class ChatHandlers:
             stats = self.chat_service.get_chat_stats(chat_id)
             
             # Формируем текст с информацией о чате
-            text = f"💬 Чат: {chat_name}\n\n"
+            text = f"📊 [Статистика чата]\n\n"
+            text += f"💬 Чат: {chat_name}\n\n"
             text += f"📊 *Статистика:*\n"
             text += f"• Всего сообщений: {stats.total_messages}\n"
             text += f"• Дней загружено: {stats.days_count}\n\n"
@@ -362,7 +381,8 @@ class ChatHandlers:
             stats = self.chat_service.get_chat_stats(chat_id)
             
             # Формируем текст с информацией о чате
-            text = f"💬 Чат: {chat_name}\n\n"
+            text = f"📊 [Статистика чата]\n\n"
+            text += f"💬 Чат: {chat_name}\n\n"
             text += f"📊 *Статистика:*\n"
             text += f"• Всего сообщений: {stats.total_messages}\n"
             text += f"• Дней загружено: {stats.days_count}\n\n"
@@ -418,7 +438,8 @@ class ChatHandlers:
             
             stats = self.chat_service.get_chat_stats(vk_chat_id)
             
-            text = f"💬 Чат: {chat_name}\n\n"
+            text = f"📊 [Статистика чата]\n\n"
+            text += f"💬 Чат: {chat_name}\n\n"
             text += f"📊 *Статистика:*\n"
             text += f"• Всего сообщений: {stats.total_messages}\n"
             text += f"• Дней загружено: {stats.days_count}\n\n"
@@ -491,7 +512,7 @@ class ChatHandlers:
             current_model = context.user_data.get('selected_model_id', 'Не выбрано')
             
             await query.edit_message_text(
-                f"📝 Создание суммаризации\n\n"
+                f"📝 [Создание суммаризации]\n\n"
                 f"💬 Чат: {chat_name}\n"
                 f"🤖 Провайдер: {current_provider}\n"
                 f"🧠 Модель: {current_model}\n"
@@ -527,10 +548,183 @@ class ChatHandlers:
             keyboard = keyboards.create_summary_keyboard(vk_chat_id, available_dates, show_all=True)
             
             await query.edit_message_text(
-                f"📅 Все доступные даты ({len(available_dates)}):\n\n"
+                f"📅 [Все доступные даты] ({len(available_dates)}):\n\n"
                 "Выберите дату для создания суммаризации:",
                 reply_markup=keyboard
             )
         except Exception as e:
             logger.error(f"Ошибка в all_dates_handler: {e}")
             await query.edit_message_text(format_error_message(e))
+    
+    async def set_schedule_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик установки расписания"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Получаем group_id из контекста или из чата
+            group_id = context.user_data.get('selected_group_id')
+            if not group_id:
+                # Если нет в контексте, берем из чата (для работы в группах)
+                if update.effective_chat.type in ['group', 'supergroup']:
+                    group_id = update.effective_chat.id
+                else:
+                    await query.edit_message_text(
+                        "❌ Группа не выбрана"
+                    )
+                    return
+            
+            # Проверяем права администратора только для групп
+            user_id = update.effective_user.id
+            
+            # Если это группа - проверяем права администратора
+            if update.effective_chat.type in ['group', 'supergroup']:
+                administrators = await context.bot.get_chat_administrators(group_id)
+                admin_ids = [admin.user.id for admin in administrators]
+                
+                if user_id not in admin_ids:
+                    await query.edit_message_text(
+                        "❌ Только администраторы могут устанавливать расписание"
+                    )
+                    return
+            
+            # Устанавливаем флаги для загрузки расписания
+            context.user_data['uploading_schedule'] = True
+            context.user_data['schedule_group_id'] = group_id
+            
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.schedule_management_keyboard()
+            
+            await query.edit_message_text(
+                "📅 [Установка расписания]\n\n"
+                "Отправьте фото расписания в следующем сообщении.\n\n"
+                "Или отправьте /cancel для отмены.",
+                reply_markup=keyboard
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в set_schedule_handler: {e}")
+            await query.edit_message_text(
+                format_error_message(e)
+            )
+    
+    async def delete_schedule_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик удаления расписания"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Получаем group_id из контекста или из чата
+            group_id = context.user_data.get('selected_group_id')
+            if not group_id:
+                # Если нет в контексте, берем из чата (для работы в группах)
+                if update.effective_chat.type in ['group', 'supergroup']:
+                    group_id = update.effective_chat.id
+                else:
+                    await query.edit_message_text(
+                        "❌ Группа не выбрана"
+                    )
+                    return
+            
+            # Проверяем права администратора только для групп
+            user_id = update.effective_user.id
+            
+            # Если это группа - проверяем права администратора
+            if update.effective_chat.type in ['group', 'supergroup']:
+                administrators = await context.bot.get_chat_administrators(group_id)
+                admin_ids = [admin.user.id for admin in administrators]
+                
+                if user_id not in admin_ids:
+                    await query.edit_message_text(
+                        "❌ Только администраторы могут удалять расписание"
+                    )
+                    return
+            
+            # Удаляем расписание
+            success = self.chat_service.delete_schedule_photo(group_id)
+            
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.schedule_management_keyboard()
+            
+            if success:
+                await query.edit_message_text(
+                    "✅ Расписание удалено",
+                    reply_markup=keyboard
+                )
+            else:
+                await query.edit_message_text(
+                    "❌ Не удалось удалить расписание",
+                    reply_markup=keyboard
+                )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в delete_schedule_handler: {e}")
+            await query.edit_message_text(
+                format_error_message(e)
+            )
+    
+    async def show_schedule_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик показа расписания"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Получаем group_id из контекста или из чата
+            group_id = context.user_data.get('selected_group_id')
+            if not group_id:
+                # Если нет в контексте, берем из чата (для работы в группах)
+                if update.effective_chat.type in ['group', 'supergroup']:
+                    group_id = update.effective_chat.id
+                else:
+                    await query.edit_message_text(
+                        "❌ Группа не выбрана"
+                    )
+                    return
+            
+            # Получаем file_id расписания
+            file_id = self.chat_service.get_schedule_photo(group_id)
+            
+            if file_id:
+                # Отправляем фото расписания в личные сообщения
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=file_id,
+                    caption="📅 Расписание группы"
+                )
+            else:
+                await query.edit_message_text(
+                    "❌ Расписание не установлено\n\n"
+                    "Используйте кнопку 'Установить расписание' для загрузки фото."
+                )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в show_schedule_handler: {e}")
+            await query.edit_message_text(
+                format_error_message(e)
+            )
+    
+    async def schedule_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /schedule"""
+        try:
+            chat_id = update.effective_chat.id
+            
+            # Получаем file_id расписания
+            file_id = self.chat_service.get_schedule_photo(chat_id)
+            
+            if file_id:
+                # Отправляем фото расписания
+                await update.message.reply_photo(
+                    photo=file_id,
+                    caption="📅 Расписание группы"
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Расписание не установлено\n\n"
+                    "Используйте кнопку 'Установить расписание' для загрузки фото."
+                )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в schedule_command_handler: {e}")
+            await update.message.reply_text(
+                "❌ Ошибка при получении расписания"
+            )

@@ -51,17 +51,29 @@ def format_date_for_display(date_str: str) -> str:
         return date_str
 
 
-def format_chat_stats(stats: Dict) -> str:
+def format_chat_stats(stats) -> str:
     """Форматировать статистику чата для отображения"""
     text = f"📊 *Статистика* чата\n\n"
-    text += f"• Всего сообщений: {stats.get('total_messages', 0)}\n"
-    text += f"• Дней загружено: {stats.get('days_count', 0)}\n\n"
+    text += f"• Всего сообщений: {stats.total_messages}\n"
+    text += f"• Дней загружено: {stats.days_count}\n"
+    text += f"• Изображений: {stats.total_images} (проанализировано: {stats.analyzed_images})\n"
     
-    if stats.get('recent_days'):
+    if stats.unanalyzed_images > 0:
+        text += f"• ⚠️ Не проанализировано: {stats.unanalyzed_images} изображений\n"
+    
+    text += "\n"
+    
+    if stats.recent_days:
         text += "📅 *Последние дни:*\n"
-        for day in stats['recent_days'][:5]:
+        for day in stats.recent_days[:5]:
             date_display = format_date_for_display(day['date'])
             text += f"• {date_display} ({day['count']} сообщений)\n"
+    
+    if stats.recent_analysis_dates:
+        text += "\n🖼️ *Последние анализы изображений:*\n"
+        for day in stats.recent_analysis_dates[:5]:
+            date_display = format_date_for_display(day['date'])
+            text += f"• {date_display} ({day['count']} изображений)\n"
     
     return text
 

@@ -36,6 +36,9 @@ class VKMaxTelegramBot:
         ).connection_pool_size(8).read_timeout(30).write_timeout(30).connect_timeout(10).build()
         
         self.application.add_handler(CommandHandler("start", self.handlers_manager.start_handler))
+        self.application.add_handler(CommandHandler("schedule", self.handlers_manager.schedule_command_handler))
+        self.application.add_handler(CommandHandler("menu", self.handlers_manager.menu_command_handler))
+        self.application.add_handler(CommandHandler("help", self.handlers_manager.help_command_handler))
         self.application.add_handler(CallbackQueryHandler(self.handlers_manager.callback_query_handler))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handlers_manager.message_handler))
         self.application.add_handler(MessageHandler(filters.PHOTO, self.handlers_manager.photo_handler))

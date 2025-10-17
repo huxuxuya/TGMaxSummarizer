@@ -40,6 +40,7 @@ class Message(BaseModel):
     attachments: List[Dict[str, Any]] = Field(default_factory=list)
     reaction_info: Dict[str, Any] = Field(default_factory=dict)
     image_paths: List[str] = Field(default_factory=list)  # Пути к сохраненным изображениям
+    image_analysis: List[Dict[str, Any]] = Field(default_factory=list)  # Результаты анализа изображений
     created_at: Optional[datetime] = None
     
     class Config:
@@ -51,6 +52,10 @@ class ChatStats(BaseModel):
     total_messages: int = 0
     days_count: int = 0
     recent_days: List[Dict[str, Any]] = Field(default_factory=list)
+    total_images: int = 0
+    analyzed_images: int = 0
+    unanalyzed_images: int = 0
+    recent_analysis_dates: List[Dict[str, Any]] = Field(default_factory=list)
 
 class Group(BaseModel):
     """Модель Telegram группы"""

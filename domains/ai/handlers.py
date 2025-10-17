@@ -28,7 +28,7 @@ class AIHandlers:
             keyboard = keyboards.ai_provider_selection_keyboard(provider_names, provider_info=available_providers)
             
             await query.edit_message_text(
-                "🤖 Выбор AI провайдера\n\n"
+                "🤖 [Выбор AI провайдера]\n\n"
                 "Выберите провайдер для анализа чатов:",
                 reply_markup=keyboard
             )
@@ -234,7 +234,7 @@ class AIHandlers:
             current_model = context.user_data.get('selected_model_id', 'Не выбрано')
             
             await query.edit_message_text(
-                f"🤖 Выбор модели для анализа\n\n"
+                f"🤖 [Выбор модели] для анализа\n\n"
                 f"🤖 Текущий провайдер: {current_provider}\n"
                 f"🧠 Текущая модель: {current_model}\n\n"
                 f"Выберите AI провайдер и модель:",

@@ -85,8 +85,26 @@ class ImageViewer:
             'total_images': total_images,
             'total_size': total_size,
             'chats_count': chats_count,
+            'chats_with_images': chats_count,
+            'total_size_mb': round(total_size / (1024 * 1024), 2),
             'size_mb': round(total_size / (1024 * 1024), 2)
         }
+    
+    def get_all_images(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Получить все изображения по чатам"""
+        all_images = {}
+        
+        if not self.image_downloader.chat_images_path.exists():
+            return all_images
+        
+        for chat_folder in self.image_downloader.chat_images_path.iterdir():
+            if chat_folder.is_dir():
+                chat_id = chat_folder.name
+                images = self.get_chat_images(chat_id)
+                if images:
+                    all_images[chat_id] = images
+        
+        return all_images
     
     def cleanup_orphaned_images(self, chat_id: str, valid_message_ids: List[str]) -> int:
         """Удалить изображения для несуществующих сообщений"""

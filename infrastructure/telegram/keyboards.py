@@ -35,9 +35,11 @@ def main_menu_keyboard(chats_count: int = 0, chats: list = None):
     # Быстрые действия (без выбора чата)
     keyboard.append([InlineKeyboardButton("⚡ Быстрые действия", callback_data="quick_actions")])
     
-    # AI и Настройки
+    # AI, Расписание, Управление чатами и Настройки
     keyboard.extend([
         [InlineKeyboardButton("🤖 AI Модели", callback_data="select_ai_provider")],
+        [InlineKeyboardButton("📅 Управление расписанием", callback_data="schedule_management")],
+        [InlineKeyboardButton("📊 Управление чатами", callback_data="manage_chats")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="settings_menu")]
     ])
     
@@ -62,14 +64,52 @@ def group_selection_keyboard(groups: list):
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     return InlineKeyboardMarkup(keyboard)
 
-def chat_management_keyboard():
+def group_selection_for_schedule_keyboard(groups: list):
+    """Клавиатура выбора группы для управления расписанием"""
+    keyboard = []
+    for group in groups:
+        # Support both Pydantic models and dicts
+        if hasattr(group, 'group_id'):
+            group_id = group.group_id
+            group_name = group.group_name
+        else:
+            group_id = group['group_id']
+            group_name = group['group_name']
+        
+        keyboard.append([InlineKeyboardButton(
+            f"📱 {group_name}", 
+            callback_data=f"select_group_for_schedule_{group_id}"
+        )])
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(keyboard)
+
+def chat_management_keyboard(group_id: int = None):
     """Клавиатура управления чатами"""
     keyboard = [
         [InlineKeyboardButton("➕ Добавить чат", callback_data="add_chat")],
         [InlineKeyboardButton("❌ Удалить чат", callback_data="remove_chat")],
         [InlineKeyboardButton("📋 Список чатов", callback_data="list_chats")],
+        [InlineKeyboardButton("⚙️ Настройки чата", callback_data="chat_settings")]
+    ]
+    
+    # Определяем куда ведет кнопка "Назад" в зависимости от контекста
+    if group_id:
+        # Если мы в контексте конкретной группы, возвращаемся к меню группы
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=f"back_to_group_{group_id}")])
+    else:
+        # Если это общее меню управления чатами, возвращаемся в главное меню
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])
+    
+    return InlineKeyboardMarkup(keyboard)
+
+def group_chat_management_keyboard(group_id: int):
+    """Клавиатура управления чатами конкретной группы"""
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить чат", callback_data="add_chat")],
+        [InlineKeyboardButton("❌ Удалить чат", callback_data="remove_chat")],
+        [InlineKeyboardButton("📋 Список чатов", callback_data="list_chats")],
         [InlineKeyboardButton("⚙️ Настройки чата", callback_data="chat_settings")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]
+        [InlineKeyboardButton("🔙 Назад к группе", callback_data=f"back_to_group_{group_id}")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -485,7 +525,7 @@ def quick_actions_keyboard(selected_chat_id: str = None):
     keyboard.append([InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")])
     return InlineKeyboardMarkup(keyboard)
 
-def chat_quick_menu_keyboard(vk_chat_id: str):
+def chat_quick_menu_keyboard(vk_chat_id: str, group_id: int = None):
     """Упрощенное меню чата"""
     keyboard = [
         # Основные действия в одну строку
@@ -498,8 +538,35 @@ def chat_quick_menu_keyboard(vk_chat_id: str):
             InlineKeyboardButton("📊 Статистика", callback_data=f"chat_stats_{vk_chat_id}")
         ],
         # Дополнительно
+        [InlineKeyboardButton("🖼️ Анализ изображений", callback_data=f"image_analysis_menu_{vk_chat_id}")],
         [InlineKeyboardButton("📤 Опубликовать", callback_data=f"publish_menu_{vk_chat_id}")],
-        [InlineKeyboardButton("🔙 Мои чаты", callback_data="back_to_main")]
+    ]
+    
+    # Определяем куда ведет кнопка "Назад" в зависимости от контекста
+    if group_id:
+        # Если мы в контексте конкретной группы, возвращаемся к главному меню группы
+        keyboard.append([InlineKeyboardButton("🔙 К группе", callback_data=f"back_to_group_{group_id}")])
+    else:
+        # Если это общее меню, возвращаемся к выбору чатов
+        keyboard.append([InlineKeyboardButton("🔙 Мои чаты", callback_data="back_to_main")])
+    
+    return InlineKeyboardMarkup(keyboard)
+
+def image_analysis_menu_keyboard(vk_chat_id: str):
+    """Меню анализа изображений"""
+    keyboard = [
+        [InlineKeyboardButton("▶️ Начать анализ", callback_data=f"start_image_analysis_{vk_chat_id}")],
+        [InlineKeyboardButton("⚙️ Настройки анализа", callback_data=f"image_analysis_settings_{vk_chat_id}")],
+        [InlineKeyboardButton("🔙 Назад к чату", callback_data=f"quick_chat_{vk_chat_id}")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def image_analysis_settings_keyboard(vk_chat_id: str):
+    """Клавиатура настроек анализа изображений"""
+    keyboard = [
+        [InlineKeyboardButton("🤖 Выбрать модель", callback_data=f"select_analysis_model_{vk_chat_id}")],
+        [InlineKeyboardButton("📝 Изменить промпт", callback_data=f"change_analysis_prompt_{vk_chat_id}")],
+        [InlineKeyboardButton("🔙 Назад", callback_data=f"image_analysis_menu_{vk_chat_id}")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -535,9 +602,19 @@ def settings_menu_keyboard():
         [InlineKeyboardButton("➕ Добавить чат", callback_data="add_chat")],
         [InlineKeyboardButton("❌ Удалить чат", callback_data="remove_chat")],
         [InlineKeyboardButton("🤖 AI провайдеры (детально)", callback_data="ai_provider_settings")],
-        [InlineKeyboardButton("📅 Расписание публикаций", callback_data="schedule_settings")],
+        [InlineKeyboardButton("📅 Управление расписанием", callback_data="schedule_management")],
         [InlineKeyboardButton("🔄 Сменить группу", callback_data="change_group")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def schedule_management_keyboard():
+    """Клавиатура управления расписанием группы"""
+    keyboard = [
+        [InlineKeyboardButton("📅 Показать расписание", callback_data="show_schedule")],
+        [InlineKeyboardButton("📤 Установить расписание", callback_data="set_schedule")],
+        [InlineKeyboardButton("🗑️ Удалить расписание", callback_data="delete_schedule")],
+        [InlineKeyboardButton("🔙 К группе", callback_data="back_to_group_menu")]
     ]
     return InlineKeyboardMarkup(keyboard)
 

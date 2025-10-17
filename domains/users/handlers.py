@@ -82,7 +82,7 @@ class UserHandlers:
             await update.effective_message.reply_text(
                 f"👋 Добро пожаловать!\n\n"
                 f"✅ Выбрана группа: {user_groups[0].group_name}\n\n"
-                f"📊 Управление чатами VK MAX",
+                f"📊 [Главное меню] Управление чатами VK MAX",
                 reply_markup=keyboard
             )
         else:
@@ -91,7 +91,7 @@ class UserHandlers:
             
             await update.effective_message.reply_text(
                 "👋 Добро пожаловать!\n\n"
-                "Выберите группу для работы:",
+                "[Выберите группу] для работы:",
                 reply_markup=keyboard
             )
     
@@ -123,10 +123,8 @@ class UserHandlers:
         chat_service.add_group_user(group_user)
         
         await update.effective_message.reply_text(
-            format_success_message(
-                f"Бот добавлен в группу '{chat.title}'\n\n"
-                "Используйте /start в личных сообщениях для управления чатами."
-            )
+            f"✅ Бот добавлен в группу '{chat.title}'\n\n"
+            f"Используйте /start в личных сообщениях для управления чатами и расписанием."
         )
     
     async def change_group_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -147,7 +145,7 @@ class UserHandlers:
             keyboard = keyboards.group_selection_keyboard(user_groups)
             
             await update.effective_message.reply_text(
-                "Выберите группу для работы:",
+                "[Выберите группу] для работы:",
                 reply_markup=keyboard
             )
             
@@ -201,8 +199,9 @@ class UserHandlers:
                     # Получаем статистику чата
                     stats = chat_service.get_chat_stats(last_chat_id)
                     
-                    text = f"✅ Группа: {group_name}\n"
-                    text += f"💬 Чат: {chat_name}\n\n"
+                    text = f"📊 [Статистика группы и чата]\n\n"
+                    text += f"✅ [Группа]: {group_name}\n"
+                    text += f"💬 [Чат]: {chat_name}\n\n"
                     text += f"📊 *Статистика:*\n"
                     text += f"• Всего сообщений: {stats.total_messages}\n"
                     text += f"• Дней загружено: {stats.days_count}\n\n"
@@ -213,7 +212,7 @@ class UserHandlers:
                             text += f"• {day['date']} ({day['count']} сообщений)\n"
                     
                     from infrastructure.telegram import keyboards
-                    keyboard = keyboards.chat_quick_menu_keyboard(last_chat_id)
+                    keyboard = keyboards.chat_quick_menu_keyboard(last_chat_id, group_id)
                     
                     await query.edit_message_text(
                         text,
@@ -227,8 +226,8 @@ class UserHandlers:
             keyboard = keyboards.main_menu_keyboard(chats_count=len(group_chats), chats=group_chats)
             
             await query.edit_message_text(
-                f"✅ Группа выбрана: {group_name}\n\n"
-                f"📊 Управление чатами VK MAX\n\n"
+                f"✅ [Группа выбрана]: {group_name}\n\n"
+                f"📊 [Главное меню] Управление чатами VK MAX\n\n"
                 f"Выберите действие:",
                 reply_markup=keyboard
             )
@@ -249,7 +248,7 @@ class UserHandlers:
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="settings_menu")]]
             
             await query.edit_message_text(
-                "📅 Расписание публикаций\n\n"
+                "📅 [Расписание публикаций]\n\n"
                 "⚠️ Функция в разработке\n\n"
                 "Здесь будет возможность настроить автоматическую публикацию суммаризаций по расписанию.",
                 reply_markup=InlineKeyboardMarkup(keyboard)
