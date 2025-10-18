@@ -93,6 +93,8 @@ class HandlersManager:
                              self.summary_handlers.publish_summary_html_handler)
         self.registry.register("select_date_*", 
                              self.summary_handlers.select_date_handler)
+        self.registry.register("recreate_summary_*", 
+                             self.summary_handlers.recreate_summary_handler)
         
         # Special handlers
         self.registry.register("select_model_for_analysis", 
@@ -358,7 +360,8 @@ class HandlersManager:
                     f"Статус: {TelegramFormatter.escape_markdown_v1(status_text)}\n\n"
                     f"Выберите действие:",
                     reply_markup=keyboard,
-                    parse_mode='Markdown'
+                    parse_mode='Markdown',
+                    disable_web_page_preview=True
                 )
             else:
                 # Показываем выбор групп
@@ -493,7 +496,8 @@ class HandlersManager:
                 f"Статус: {TelegramFormatter.escape_markdown_v1(status_text)}\n\n"
                 f"Выберите действие:",
                 reply_markup=keyboard,
-                parse_mode='Markdown'
+                parse_mode='Markdown',
+                disable_web_page_preview=True
             )
             
         except Exception as e:

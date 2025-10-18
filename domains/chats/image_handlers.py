@@ -212,7 +212,8 @@ class ImageAnalysisHandlers:
             await query.edit_message_text(
                 success_text,
                 reply_markup=keyboard,
-                parse_mode='Markdown'
+                parse_mode='Markdown',
+                disable_web_page_preview=True
             )
             
         except Exception as e:
@@ -434,7 +435,8 @@ class ImageAnalysisHandlers:
                 await query.edit_message_text(
                     text,
                     reply_markup=keyboard,
-                    parse_mode='Markdown'
+                    parse_mode='Markdown',
+                    disable_web_page_preview=True
                 )
             else:
                 from infrastructure.telegram import keyboards

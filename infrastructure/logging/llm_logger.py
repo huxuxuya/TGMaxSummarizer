@@ -97,6 +97,50 @@ class LLMLogger:
         
         logger.info(f"📁 LLM Logger инициализирован: {self.scenario_dir}")
     
+    def _estimate_tokens(self, text: str) -> int:
+        """
+        Оценить количество токенов в тексте
+        
+        Args:
+            text: Текст для анализа
+            
+        Returns:
+            Примерное количество токенов
+        """
+        if not text:
+            return 0
+        
+        # Примерная оценка: 4 символа = 1 токен для большинства языков
+        # Для русского текста может быть 3-4 символа на токен
+        return len(text) // 4
+    
+    def _get_token_stats(self, input_text: str, output_text: str = None) -> dict:
+        """
+        Получить статистику по токенам
+        
+        Args:
+            input_text: Входящий текст
+            output_text: Исходящий текст (опционально)
+            
+        Returns:
+            Словарь со статистикой токенов
+        """
+        input_tokens = self._estimate_tokens(input_text)
+        output_tokens = self._estimate_tokens(output_text) if output_text else 0
+        total_tokens = input_tokens + output_tokens
+        
+        stats = {
+            "Входящие токены": input_tokens,
+            "Исходящие токены": output_tokens,
+            "Всего токенов": total_tokens,
+            "Длина контекста": len(input_text)
+        }
+        
+        if output_text:
+            stats["Длина ответа"] = len(output_text)
+        
+        return stats
+    
     def log_stage_time(self, stage: str, duration: float):
         """
         Записать время выполнения этапа
@@ -142,7 +186,8 @@ class LLMLogger:
     def _create_scenario_dir(self):
         """Создать папку сценария с учетом имени модели"""
         if hasattr(self, 'scenario') and self.scenario and self.scenario_dir is None:
-            timestamp = datetime.now().strftime("%H-%M-%S")
+            # Используем полную временную метку для хронологической сортировки
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             
             # Формируем имя папки с учетом модели
             if self.model_name:
@@ -220,7 +265,7 @@ class LLMLogger:
         """
         additional_info = {"Количество сообщений": message_count} if message_count > 0 else None
         self._write_file(
-            "04_formatted_messages.txt",
+            "01_formatted_messages.txt",
             formatted_text,
             "Форматированные сообщения для суммаризации",
             additional_info
@@ -235,9 +280,9 @@ class LLMLogger:
             request_type: Тип запроса (summarization, reflection, improvement)
         """
         filename_map = {
-            "summarization": "05_summarization_request.txt",
-            "reflection": "07_reflection_request.txt", 
-            "improvement": "09_improvement_request.txt"
+            "summarization": "02_summarization_request.txt",
+            "reflection": "04_reflection_request.txt", 
+            "improvement": "06_improvement_request.txt"
         }
         
         title_map = {
@@ -249,12 +294,22 @@ class LLMLogger:
         filename = filename_map.get(request_type, "02_llm_request.txt")
         title = title_map.get(request_type, "Запрос в LLM")
         
+        # Разделяем системный промпт и пользовательские сообщения
+        lines = prompt.split('\n')
+        formatted_prompt = "=== ПОЛНЫЙ ПРОМПТ ===\n\n"
+        formatted_prompt += prompt
+        
+        # Получаем статистику токенов
+        token_stats = self._get_token_stats(prompt)
+        
         additional_info = {
             "Тип запроса": request_type,
-            "Длина промпта": f"{len(prompt)} символов"
+            "Длина промпта": f"{len(prompt)} символов",
+            "Строк": len(lines),
+            **token_stats
         }
         
-        self._write_file(filename, prompt, title, additional_info)
+        self._write_file(filename, formatted_prompt, title, additional_info)
     
     def log_llm_response(self, response: str, request_type: str = "summarization", response_time: float = None):
         """
@@ -266,9 +321,9 @@ class LLMLogger:
             response_time: Время ответа в секундах
         """
         filename_map = {
-            "summarization": "06_summarization_response.txt",
-            "reflection": "08_reflection_response.txt",
-            "improvement": "10_improvement_response.txt"
+            "summarization": "03_summarization_response.txt",
+            "reflection": "05_reflection_response.txt",
+            "improvement": "07_improvement_response.txt"
         }
         
         title_map = {
@@ -280,23 +335,86 @@ class LLMLogger:
         filename = filename_map.get(request_type, "03_llm_response.txt")
         title = title_map.get(request_type, "Ответ от LLM")
         
-        # Подсчитываем примерное количество токенов
-        estimated_tokens = len(response) // 4  # Примерно 4 символа = 1 токен
+        # Получаем статистику токенов для ответа
+        token_stats = self._get_token_stats("", response)  # Только исходящие токены
         
         additional_info = {
             "Тип ответа": request_type,
             "Длина ответа": f"{len(response)} символов",
-            "Примерное количество токенов": f"~{estimated_tokens}"
+            **token_stats
         }
         
         # Добавляем информацию о времени ответа и скорости
         if response_time is not None:
             additional_info["Время ответа"] = f"{response_time:.2f} секунд"
             if response_time > 0:
-                tokens_per_sec = estimated_tokens / response_time
+                tokens_per_sec = token_stats['Исходящие токены'] / response_time
                 additional_info["Скорость генерации"] = f"{tokens_per_sec:.1f} токенов/сек"
         
         self._write_file(filename, response, title, additional_info)
+    
+    def log_token_usage(self, input_text: str, output_text: str, request_type: str = "summarization", response_time: float = None):
+        """
+        Логировать полную статистику использования токенов
+        
+        Args:
+            input_text: Входящий текст (промпт)
+            output_text: Исходящий текст (ответ)
+            request_type: Тип запроса
+            response_time: Время ответа в секундах
+        """
+        # Получаем полную статистику токенов
+        token_stats = self._get_token_stats(input_text, output_text)
+        
+        # Формируем содержимое файла
+        content = f"=== СТАТИСТИКА ТОКЕНОВ ===\n\n"
+        content += f"Тип запроса: {request_type}\n"
+        content += f"Время: {datetime.now().strftime('%H:%M:%S')}\n"
+        content += f"Провайдер: {self.provider_name}\n"
+        content += f"Модель: {self.model_name}\n\n"
+        
+        content += f"📊 СТАТИСТИКА ТОКЕНОВ:\n"
+        content += f"   • Входящие токены: {token_stats['Входящие токены']}\n"
+        content += f"   • Исходящие токены: {token_stats['Исходящие токены']}\n"
+        content += f"   • Всего токенов: {token_stats['Всего токенов']}\n"
+        content += f"   • Длина контекста: {token_stats['Длина контекста']} символов\n"
+        content += f"   • Длина ответа: {token_stats['Длина ответа']} символов\n\n"
+        
+        if response_time is not None:
+            content += f"⏱️ ПРОИЗВОДИТЕЛЬНОСТЬ:\n"
+            content += f"   • Время ответа: {response_time:.2f} секунд\n"
+            if response_time > 0:
+                tokens_per_second = token_stats['Исходящие токены'] / response_time
+                content += f"   • Скорость генерации: {tokens_per_second:.2f} токенов/сек\n"
+        
+        # Оценка стоимости (примерная для разных провайдеров)
+        content += f"\n💰 ОЦЕНКА СТОИМОСТИ:\n"
+        if self.provider_name and "gpt" in self.provider_name.lower():
+            # GPT-4: ~$0.03 за 1K токенов входящих, ~$0.06 за 1K исходящих
+            input_cost = (token_stats['Входящие токены'] / 1000) * 0.03
+            output_cost = (token_stats['Исходящие токены'] / 1000) * 0.06
+            total_cost = input_cost + output_cost
+            content += f"   • Входящие: ~${input_cost:.4f}\n"
+            content += f"   • Исходящие: ~${output_cost:.4f}\n"
+            content += f"   • Всего: ~${total_cost:.4f}\n"
+        elif self.provider_name and "gemini" in self.provider_name.lower():
+            # Gemini Pro: ~$0.0005 за 1K токенов
+            total_cost = (token_stats['Всего токенов'] / 1000) * 0.0005
+            content += f"   • Всего: ~${total_cost:.4f}\n"
+        else:
+            content += f"   • Локальная модель (бесплатно)\n"
+        
+        additional_info = {
+            "Тип запроса": request_type,
+            **token_stats
+        }
+        
+        if response_time is not None:
+            additional_info["Время ответа"] = f"{response_time:.2f}с"
+            if response_time > 0:
+                additional_info["Скорость генерации"] = f"{token_stats['Исходящие токены'] / response_time:.2f} токенов/сек"
+        
+        self._write_file("22_token_usage.txt", content, "Статистика использования токенов", additional_info)
     
     def log_raw_result(self, raw_text: str):
         """
@@ -307,7 +425,7 @@ class LLMLogger:
         """
         additional_info = {"Длина текста": f"{len(raw_text)} символов"}
         self._write_file(
-            "11_raw_result.txt",
+            "08_raw_result.txt",
             raw_text,
             "Сырой результат суммаризации",
             additional_info
@@ -322,7 +440,7 @@ class LLMLogger:
         """
         additional_info = {"Длина текста": f"{len(formatted_text)} символов"}
         self._write_file(
-            "12_formatted_result.txt",
+            "09_formatted_result.txt",
             formatted_text,
             "Форматированный результат для Telegram",
             additional_info
@@ -369,6 +487,11 @@ class LLMLogger:
 - Суммаризация: {'✅' if summary_data.get('summary') else '❌'}
 - Рефлексия: {'✅' if summary_data.get('reflection') else '❌'}
 - Улучшение: {'✅' if summary_data.get('improved') else '❌'}
+
+Статистика токенов:
+- Входящие токены: {summary_data.get('input_tokens', 0)}
+- Исходящие токены: {summary_data.get('output_tokens', 0)}
+- Всего токенов: {summary_data.get('total_tokens', 0)}
 
 Файлы созданы:
 """
@@ -431,7 +554,7 @@ class LLMLogger:
         """
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.date_dir / "02_cleaning_request.txt"
+            log_file = self.date_dir / "10_cleaning_request.txt"
             
             with open(log_file, 'w', encoding='utf-8') as f:
                 f.write(f"=== Запрос на очистку данных ===\n")
@@ -457,7 +580,7 @@ class LLMLogger:
         """
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.date_dir / "03_cleaning_response.txt"
+            log_file = self.date_dir / "11_cleaning_response.txt"
             
             # Подсчитываем примерное количество токенов
             estimated_tokens = len(response_text) // 4
@@ -523,7 +646,7 @@ class LLMLogger:
         try:
             import json
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.scenario_dir / "04_filtered_messages_raw.txt"
+            log_file = self.scenario_dir / "02_filtered_messages_raw.txt"
             
             with open(log_file, 'w', encoding='utf-8') as f:
                 f.write(f"=== Отфильтрованные сообщения после очистки ===\n")
@@ -549,7 +672,7 @@ class LLMLogger:
         """
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.scenario_dir / "09_improvement_request.txt"
+            log_file = self.scenario_dir / "12_improvement_request.txt"
             
             with open(log_file, 'w', encoding='utf-8') as f:
                 f.write(f"=== Запрос на улучшение суммаризации ===\n")
@@ -575,7 +698,7 @@ class LLMLogger:
         """
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.scenario_dir / "10_improvement_response.txt"
+            log_file = self.scenario_dir / "13_improvement_response.txt"
             
             # Подсчитываем примерное количество токенов
             estimated_tokens = len(response_text) // 4
@@ -614,7 +737,7 @@ class LLMLogger:
         try:
             import json
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.scenario_dir / "11_final_result_raw.txt"
+            log_file = self.scenario_dir / "14_final_result_raw.txt"
             
             with open(log_file, 'w', encoding='utf-8') as f:
                 f.write(f"=== Сырой финальный результат ===\n")
@@ -644,7 +767,7 @@ class LLMLogger:
         """
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.scenario_dir / "13_telegram_formatted.txt"
+            log_file = self.scenario_dir / "15_telegram_formatted.txt"
             
             with open(log_file, 'w', encoding='utf-8') as f:
                 f.write(f"=== Отформатированный текст для Telegram ===\n")
@@ -672,7 +795,7 @@ class LLMLogger:
         """
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.scenario_dir / "01_classification_request.txt"
+            log_file = self.scenario_dir / "16_classification_request.txt"
             
             with open(log_file, 'w', encoding='utf-8') as f:
                 f.write(f"=== Запрос на классификацию сообщений ===\n")
@@ -698,7 +821,7 @@ class LLMLogger:
         """
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.scenario_dir / "02_classification_response.txt"
+            log_file = self.scenario_dir / "17_classification_response.txt"
             
             # Подсчитываем примерное количество токенов
             estimated_tokens = len(response_text) // 4
@@ -735,7 +858,7 @@ class LLMLogger:
         """
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.scenario_dir / "03_extraction_request.txt"
+            log_file = self.scenario_dir / "18_extraction_request.txt"
             
             with open(log_file, 'w', encoding='utf-8') as f:
                 f.write(f"=== Запрос на экстракцию слотов ===\n")
@@ -761,7 +884,7 @@ class LLMLogger:
         """
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.scenario_dir / "04_extraction_response.txt"
+            log_file = self.scenario_dir / "19_extraction_response.txt"
             
             # Подсчитываем примерное количество токенов
             estimated_tokens = len(response_text) // 4
@@ -798,7 +921,7 @@ class LLMLogger:
         """
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.scenario_dir / "05_parent_summary_request.txt"
+            log_file = self.scenario_dir / "20_parent_summary_request.txt"
             
             with open(log_file, 'w', encoding='utf-8') as f:
                 f.write(f"=== Запрос на генерацию сводки для родителей ===\n")
@@ -824,7 +947,7 @@ class LLMLogger:
         """
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_file = self.scenario_dir / "06_parent_summary_response.txt"
+            log_file = self.scenario_dir / "21_parent_summary_response.txt"
             
             # Подсчитываем примерное количество токенов
             estimated_tokens = len(response_text) // 4
@@ -866,15 +989,15 @@ class LLMLogger:
             
             # Определяем имя файла в зависимости от этапа
             stage_file_map = {
-                'classification': '99_classification_error.txt',
-                'extraction': '99_extraction_error.txt',
-                'parent_summary': '99_parent_summary_error.txt',
-                'summarization': '99_summarization_error.txt',
-                'reflection': '99_reflection_error.txt',
-                'improvement': '99_improvement_error.txt'
+                'classification': '22_classification_error.txt',
+                'extraction': '23_extraction_error.txt',
+                'parent_summary': '24_parent_summary_error.txt',
+                'summarization': '25_summarization_error.txt',
+                'reflection': '26_reflection_error.txt',
+                'improvement': '27_improvement_error.txt'
             }
             
-            filename = stage_file_map.get(stage, '99_error.txt')
+            filename = stage_file_map.get(stage, '28_error.txt')
             log_file = self.scenario_dir / filename
             
             with open(log_file, 'w', encoding='utf-8') as f:

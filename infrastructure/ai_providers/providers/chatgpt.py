@@ -51,10 +51,6 @@ class ChatGPTProvider(BaseAIProvider):
             # Вызываем ChatGPT API
             self.logger.info("🤖 Отправляем запрос в ChatGPT...")
             
-            # Логируем запрос если логгер установлен
-            if self.llm_logger:
-                self.llm_logger.log_llm_request(formatted_text, "summarization")
-            
             summary = await self._call_chatgpt_api(formatted_text)
             
             # Логируем ответ если логгер установлен
@@ -208,6 +204,10 @@ class ChatGPTProvider(BaseAIProvider):
             # Используем централизованный промпт
             from shared.prompts import PromptTemplates
             prompt = PromptTemplates.get_summarization_prompt(text, 'chatgpt')
+            
+            # Логируем ПОЛНЫЙ промпт (с системным сообщением)
+            if self.llm_logger:
+                self.llm_logger.log_llm_request(prompt, "summarization")
 
             self.logger.info(f"🔗 Отправляем запрос в ChatGPT")
             self.logger.info(f"📝 Длина текста: {len(text)} символов")

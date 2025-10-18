@@ -409,7 +409,7 @@ class TelegramMessageSender:
         reply_markup: Optional[InlineKeyboardMarkup] = None,
         parse_mode: ParseMode = ParseMode.MARKDOWN_V2,
         disable_notification: bool = False,
-        disable_web_page_preview: bool = False,
+        disable_web_page_preview: bool = True,
         **kwargs
     ) -> bool:
         """

@@ -667,3 +667,30 @@ def summary_result_keyboard(vk_chat_id: str, date: str):
         [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+def summary_view_keyboard(vk_chat_id: str, date: str, show_recreate: bool = True):
+    """
+    Клавиатура для просмотра существующей суммаризации
+    
+    Args:
+        vk_chat_id: ID чата VK MAX
+        date: Дата суммаризации (YYYY-MM-DD)
+        show_recreate: Показывать ли кнопку пересоздания
+    
+    Returns:
+        InlineKeyboardMarkup с кнопками действий
+    """
+    keyboard = [
+        [InlineKeyboardButton("📤 Опубликовать (Markdown)", callback_data=f"publish_md_{vk_chat_id}_{date}")],
+        [InlineKeyboardButton("📤 Опубликовать (HTML)", callback_data=f"publish_html_{vk_chat_id}_{date}")],
+    ]
+    
+    if show_recreate:
+        keyboard.append([InlineKeyboardButton("🔄 Пересоздать суммаризацию", callback_data=f"recreate_summary_{vk_chat_id}_{date}")])
+    
+    keyboard.extend([
+        [InlineKeyboardButton("🔙 К списку дат", callback_data=f"check_summary_{vk_chat_id}")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
+    ])
+    
+    return InlineKeyboardMarkup(keyboard)

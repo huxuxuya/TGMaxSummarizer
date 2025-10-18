@@ -52,10 +52,6 @@ class GigaChatProvider(BaseAIProvider):
             # Вызываем GigaChat API
             self.logger.info("🤖 Отправляем запрос в GigaChat...")
             
-            # Логируем запрос если логгер установлен
-            if self.llm_logger:
-                self.llm_logger.log_llm_request(formatted_text, "summarization")
-            
             summary = await self._call_gigachat_api_for_summarization(formatted_text)
             
             # Логируем ответ если логгер установлен
@@ -329,6 +325,10 @@ class GigaChatProvider(BaseAIProvider):
         # Используем централизованный промпт
         from shared.prompts import PromptTemplates
         prompt = PromptTemplates.get_summarization_prompt(text, 'gigachat')
+        
+        # Логируем ПОЛНЫЙ промпт (с системным сообщением)
+        if self.llm_logger:
+            self.llm_logger.log_llm_request(prompt, "summarization")
 
         # Execute API call with summarization prompt
         return await self._execute_api_call(prompt, temperature=0.7, max_tokens=1000)

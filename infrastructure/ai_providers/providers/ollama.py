@@ -66,10 +66,6 @@ class OllamaProvider(BaseAIProvider):
             # Вызываем Ollama API
             self.logger.info(f"🤖 Отправляем запрос в Ollama ({self.model})...")
             
-            # Логируем запрос если логгер установлен
-            if self.llm_logger:
-                self.llm_logger.log_llm_request(formatted_text, "summarization")
-            
             import time
             start_time = time.time()
             summary = await self._call_ollama_api(formatted_text)
@@ -265,6 +261,10 @@ class OllamaProvider(BaseAIProvider):
                 # Для суммаризации используем централизованный промпт
                 from shared.prompts import PromptTemplates
                 prompt = PromptTemplates.get_summarization_prompt(text, 'ollama')
+                
+                # Логируем ПОЛНЫЙ промпт (с системным сообщением)
+                if self.llm_logger:
+                    self.llm_logger.log_llm_request(prompt, "summarization")
 
             self.logger.info(f"🔗 Отправляем запрос в Ollama")
             self.logger.info(f"🔗 DEBUG: URL для запроса: {self.base_url}/api/generate")

@@ -323,16 +323,23 @@ class AIHandlers:
                 from shared.utils import format_message_for_telegram
                 message_parts = format_message_for_telegram(result_text)
                 
-                # Отправляем первую часть
+                # Создаем клавиатуру с кнопками
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.summary_result_keyboard(vk_chat_id, date)
+                
+                # Отправляем первую часть с кнопками
                 await query.edit_message_text(
-                    format_success_message(message_parts[0])
+                    format_success_message(message_parts[0]),
+                    reply_markup=keyboard,
+                    disable_web_page_preview=True
                 )
                 
                 # Отправляем остальные части без кнопок
                 for part in message_parts[1:]:
                     await context.bot.send_message(
                         chat_id=query.message.chat_id,
-                        text=part
+                        text=part,
+                        disable_web_page_preview=True
                     )
             else:
                 await query.edit_message_text(

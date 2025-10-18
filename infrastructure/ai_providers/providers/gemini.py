@@ -64,10 +64,6 @@ class GeminiProvider(BaseAIProvider):
             # Вызываем Gemini API
             self.logger.info("🤖 Отправляем запрос в Gemini...")
             
-            # Логируем запрос если логгер установлен
-            if self.llm_logger:
-                self.llm_logger.log_llm_request(formatted_text, "summarization")
-            
             summary = await self._call_gemini_api(formatted_text)
             
             # Логируем ответ если логгер установлен
@@ -237,6 +233,10 @@ class GeminiProvider(BaseAIProvider):
             # Используем централизованный промпт
             from shared.prompts import PromptTemplates
             prompt = PromptTemplates.get_summarization_prompt(text[:2000], 'gemini')
+            
+            # Логируем ПОЛНЫЙ промпт (с системным сообщением)
+            if self.llm_logger:
+                self.llm_logger.log_llm_request(prompt, "summarization")
 
             self.logger.info(f"🔗 Отправляем запрос в Gemini")
             self.logger.info(f"📝 Длина текста: {len(text)} символов")

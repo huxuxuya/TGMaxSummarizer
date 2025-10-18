@@ -77,11 +77,25 @@ class SummaryHandlers:
                 return
             
             from infrastructure.telegram import keyboards
-            # Создаем клавиатуру с кнопкой "Назад" к списку дат
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"check_summary_{vk_chat_id}")]]
+            # Создаем расширенную клавиатуру с действиями
+            keyboard = keyboards.summary_view_keyboard(vk_chat_id, date)
             
-            # Формируем полный текст
-            full_text = f"📋 Суммаризация за {format_date_for_display(date)}\n\n{summary.summary_text}"
+            # Формируем полный текст с метаданными
+            metadata_text = ""
+            if summary.model_provider or summary.model_id or summary.scenario_type:
+                metadata_text = "\n\n📊 *Метаданные:*\n"
+                if summary.model_provider:
+                    metadata_text += f"   • Провайдер: {summary.model_provider}\n"
+                if summary.model_id:
+                    metadata_text += f"   • Модель: {summary.model_id}\n"
+                if summary.scenario_type:
+                    from domains.summaries.constants import SummarizationScenarios
+                    scenario_name = SummarizationScenarios.get_display_name(summary.scenario_type)
+                    metadata_text += f"   • Сценарий: {scenario_name}\n"
+                if summary.processing_time:
+                    metadata_text += f"   • Время генерации: {summary.processing_time:.2f}с\n"
+
+            full_text = f"📋 Суммаризация за {format_date_for_display(date)}\n\n{summary.summary_text}{metadata_text}"
             
             # Разбиваем на части если нужно
             from shared.utils import format_message_for_telegram
@@ -90,18 +104,102 @@ class SummaryHandlers:
             # Отправляем первую часть с кнопками
             await query.edit_message_text(
                 message_parts[0],
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                reply_markup=keyboard,
+                disable_web_page_preview=True
             )
             
             # Отправляем остальные части без кнопок
             for part in message_parts[1:]:
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text=part
+                    text=part,
+                    disable_web_page_preview=True
                 )
             
         except Exception as e:
             logger.error(f"Ошибка в select_date_handler: {e}", exc_info=True)
+            await query.edit_message_text(
+                format_error_message(e)
+            )
+    
+    async def recreate_summary_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Обработчик пересоздания суммаризации
+        
+        Позволяет пользователю запустить анализ заново для существующей даты
+        """
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Парсим callback_data: recreate_summary_{vk_chat_id}_{date}
+            parts = query.data.split('_')
+            date = parts[-1]
+            vk_chat_id = '_'.join(parts[2:-1])  # Поддержка vk_chat_id с подчеркиваниями
+            
+            # Сохраняем контекст
+            context.user_data['selected_chat_id'] = vk_chat_id
+            context.user_data['selected_date'] = date
+            
+            # Проверяем наличие сообщений за эту дату
+            from domains.chats.service import ChatService
+            from core.database.connection import DatabaseConnection
+            from core.config import load_config
+            
+            config = load_config()
+            db_connection = DatabaseConnection(config['database'].path)
+            chat_service = ChatService(db_connection)
+            
+            messages = chat_service.get_messages_by_date(vk_chat_id, date)
+            
+            if not messages or len(messages) == 0:
+                await query.edit_message_text(
+                    f"❌ Нет сообщений за {format_date_for_display(date)} для анализа.\n\n"
+                    f"Возможно, данные были удалены из базы.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 Назад", callback_data=f"check_summary_{vk_chat_id}")
+                    ]])
+                )
+                return
+            
+            # Показываем меню выбора сценария
+            from infrastructure.telegram import keyboards
+            
+            # Получаем текущие настройки провайдера и модели
+            current_provider = context.user_data.get('selected_provider', 'Не выбрано')
+            current_model = context.user_data.get('selected_model_id', 'Не выбрано')
+            
+            # Получаем существующую суммаризацию для отображения метаинформации
+            summary = self.summary_service.get_summary(vk_chat_id, date, SummaryType.DAILY)
+            
+            metadata_text = ""
+            if summary:
+                metadata_text = f"\n📊 *Текущая суммаризация:*\n"
+                if summary.model_provider:
+                    metadata_text += f"   • Провайдер: {summary.model_provider}\n"
+                if summary.model_id:
+                    metadata_text += f"   • Модель: {summary.model_id}\n"
+                if summary.scenario_type:
+                    from domains.summaries.constants import SummarizationScenarios
+                    scenario_name = SummarizationScenarios.get_display_name(summary.scenario_type)
+                    metadata_text += f"   • Сценарий: {scenario_name}\n"
+            
+            keyboard = keyboards.scenario_selection_keyboard(vk_chat_id, date)
+            
+            await query.edit_message_text(
+                f"🔄 *[Пересоздание суммаризации]*\n\n"
+                f"📅 Дата: {format_date_for_display(date)}\n"
+                f"💬 Сообщений: {len(messages)}\n"
+                f"{metadata_text}\n"
+                f"🤖 Текущий провайдер: {current_provider}\n"
+                f"🧠 Текущая модель: {current_model}\n\n"
+                f"Выберите сценарий анализа:",
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в recreate_summary_handler: {e}", exc_info=True)
             await query.edit_message_text(
                 format_error_message(e)
             )
@@ -412,7 +510,7 @@ class SummaryHandlers:
                 )
                 
                 # Запускаем анализ напрямую
-                await self._run_actual_analysis(query, vk_chat_id, date, scenario_type, current_provider, current_model)
+                await self._run_actual_analysis(query, vk_chat_id, date, scenario_type, current_provider, current_model, context)
             else:
                 # Модель не выбрана - показываем выбор модели
                 print(f"🔍 DEBUG: Модель не выбрана, показываем выбор модели:")
@@ -502,13 +600,34 @@ class SummaryHandlers:
             )
             
             # Выполняем реальный анализ
-            await self._run_actual_analysis(query, vk_chat_id, date, scenario, provider, model)
+            await self._run_actual_analysis(query, vk_chat_id, date, scenario, provider, model, context)
             
         except Exception as e:
             logger.error(f"Ошибка в run_summary_handler: {e}", exc_info=True)
             await query.edit_message_text(format_error_message(e))
     
-    async def _run_actual_analysis(self, query, vk_chat_id: str, date: str, scenario: str, provider: str, model: str):
+    def _map_scenario_to_analysis_type(self, scenario: str) -> tuple:
+        """
+        Преобразовать сценарий в параметры AnalysisRequest
+        
+        Returns:
+            tuple: (analysis_type, clean_data_first)
+        """
+        from domains.ai.models import AnalysisType
+        
+        if scenario == 'fast':
+            return (AnalysisType.SUMMARIZATION, False)
+        elif scenario == 'reflection':
+            return (AnalysisType.REFLECTION, False)
+        elif scenario == 'structured':
+            return (AnalysisType.STRUCTURED, False)
+        elif scenario == 'cleaning':
+            return (AnalysisType.SUMMARIZATION, True)
+        else:
+            # По умолчанию - быстрая суммаризация
+            return (AnalysisType.SUMMARIZATION, False)
+
+    async def _run_actual_analysis(self, query, vk_chat_id: str, date: str, scenario: str, provider: str, model: str, context: ContextTypes.DEFAULT_TYPE):
         """Выполнить реальный анализ чата"""
         print(f"🔍 DEBUG: _run_actual_analysis вызван с параметрами:")
         print(f"   vk_chat_id: {vk_chat_id}")
@@ -522,6 +641,12 @@ class SummaryHandlers:
         logger.info(f"   scenario: {scenario}")
         logger.info(f"   provider: {provider}")
         logger.info(f"   model: {model}")
+        
+        # Определяем тип анализа на основе сценария
+        analysis_type, clean_data_first = self._map_scenario_to_analysis_type(scenario)
+        logger.info(f"📋 Выбранный сценарий: {scenario}")
+        logger.info(f"📋 Тип анализа: {analysis_type}")
+        logger.info(f"📋 Предварительная очистка: {clean_data_first}")
         
         try:
             from domains.chats.service import ChatService
@@ -592,7 +717,8 @@ class SummaryHandlers:
                 provider_name=provider,
                 model_id=model,
                 user_id=query.from_user.id,
-                analysis_type=AnalysisType.SUMMARIZATION,
+                analysis_type=analysis_type,  # ✅ ПРАВИЛЬНО
+                clean_data_first=clean_data_first,  # ✅ Для сценария cleaning
                 llm_logger=llm_logger
             )
             
@@ -606,7 +732,11 @@ class SummaryHandlers:
                     date=date,
                     summary_text=result.result,
                     provider_name=result.provider_name,
-                    processing_time=result.processing_time
+                    processing_time=result.processing_time,
+                    model_provider=provider,
+                    model_id=model,
+                    scenario_type=scenario,
+                    generation_time_seconds=result.processing_time
                 )
                 
                 self.summary_service.save_summary(summary)
@@ -637,14 +767,16 @@ class SummaryHandlers:
                 # Отправляем первую часть с кнопками
                 await query.edit_message_text(
                     format_success_message(message_parts[0]),
-                    reply_markup=keyboard
+                    reply_markup=keyboard,
+                    disable_web_page_preview=True
                 )
                 
                 # Отправляем остальные части без кнопок
                 for part in message_parts[1:]:
                     await context.bot.send_message(
                         chat_id=query.message.chat_id,
-                        text=part
+                        text=part,
+                        disable_web_page_preview=True
                     )
             else:
                 from infrastructure.telegram import keyboards
