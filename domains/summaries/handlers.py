@@ -1,10 +1,13 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from .service import SummaryService
-from .models import SummaryType
+from .models import Summary, SummaryType
 from shared.utils import format_success_message, format_error_message, format_date_for_display
 from shared.constants import CallbackActions
 import logging
+import time
+from typing import List, Dict, Optional
+from domains.ai.models import StepType
 
 logger = logging.getLogger(__name__)
 
@@ -101,20 +104,57 @@ class SummaryHandlers:
             from shared.utils import format_message_for_telegram
             message_parts = format_message_for_telegram(full_text)
             
-            # Отправляем первую часть с кнопками
-            await query.edit_message_text(
-                message_parts[0],
-                reply_markup=keyboard,
-                disable_web_page_preview=True
+            # Логируем редактирование сообщения (если включено)
+            from infrastructure.logging.message_logger import TelegramMessageLogger
+            log_path = TelegramMessageLogger.log_outgoing_message(
+                chat_id=query.message.chat_id,
+                text=message_parts[0],
+                action='edit',
+                parse_mode='None',
+                message_id=query.message.message_id,
+                context={'handler': 'select_date_handler'}
             )
+
+            try:
+                # Отправляем первую часть с кнопками
+                await query.edit_message_text(
+                    message_parts[0],
+                    reply_markup=keyboard,
+                    disable_web_page_preview=True
+                )
+                if log_path:
+                    TelegramMessageLogger.log_success(log_path, query.message.message_id)
+            except Exception as e:
+                if log_path:
+                    TelegramMessageLogger.log_error(log_path, str(e))
+                raise
             
             # Отправляем остальные части без кнопок
             for part in message_parts[1:]:
-                await context.bot.send_message(
+                # Логируем (если включено)
+                from infrastructure.logging.message_logger import TelegramMessageLogger
+                log_path = TelegramMessageLogger.log_outgoing_message(
                     chat_id=query.message.chat_id,
                     text=part,
-                    disable_web_page_preview=True
+                    action='send',
+                    parse_mode='None',
+                    context={
+                        'handler': 'select_date_handler',
+                        'part_number': message_parts.index(part) + 1
+                    }
                 )
+                
+                try:
+                    message = await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=part,
+                        disable_web_page_preview=True
+                    )
+                    if log_path:
+                        TelegramMessageLogger.log_success(log_path, message.message_id)
+                except Exception as e:
+                    if log_path:
+                        TelegramMessageLogger.log_error(log_path, str(e))
             
         except Exception as e:
             logger.error(f"Ошибка в select_date_handler: {e}", exc_info=True)
@@ -293,20 +333,49 @@ class SummaryHandlers:
             group_id = context.user_data.get('selected_group_id')
             use_html = context.user_data.get('use_html_format', False)
             
+            logger.info(f"🔍 publish_to_group_handler: date={date}, vk_chat_id={vk_chat_id}, group_id={group_id}, use_html={use_html}")
+            
             if not all([date, vk_chat_id, group_id]):
+                logger.warning(f"❌ Не все параметры выбраны: date={date}, vk_chat_id={vk_chat_id}, group_id={group_id}")
                 await query.edit_message_text(
                     "❌ Не все параметры выбраны"
                 )
                 return
             
             summary = self.summary_service.get_summary(vk_chat_id, date, SummaryType.DAILY)
-            
-            logger.info(f"DEBUG: summary type = {type(summary)}, summary = {summary}")
+            logger.info(f"🔍 publish_to_group_handler: summary found = {summary is not None}")
             
             if not summary:
-                await query.edit_message_text(
-                    f"❌ Суммаризация за {format_date_for_display(date)} не найдена"
-                )
+                logger.info(f"🔍 publish_to_group_handler: суммаризация не найдена, проверяем сообщения")
+                # Проверяем, есть ли сообщения за эту дату
+                from domains.chats.repository import MessageRepository
+                from core.database.connection import DatabaseConnection
+                
+                db_connection = DatabaseConnection('bot_database.db')
+                message_repo = MessageRepository(db_connection)
+                messages_count = message_repo.get_messages_count_for_date(vk_chat_id, date)
+                
+                logger.info(f"🔍 publish_to_group_handler: messages_count = {messages_count}")
+                
+                if messages_count > 0:
+                    # Есть сообщения, но нет суммаризации - предлагаем создать
+                    from infrastructure.telegram import keyboards
+                    keyboard = keyboards.scenario_selection_keyboard(vk_chat_id, date)
+                    
+                    logger.info(f"🔍 publish_to_group_handler: отправляем сообщение с предложением создать суммаризацию")
+                    await query.edit_message_text(
+                        f"❌ Суммаризация за {format_date_for_display(date)} не найдена\n\n"
+                        f"📊 Найдено {messages_count} сообщений за эту дату\n\n"
+                        f"💡 Сначала создайте суммаризацию:",
+                        reply_markup=keyboard
+                    )
+                else:
+                    # Нет ни сообщений, ни суммаризации
+                    logger.info(f"🔍 publish_to_group_handler: нет сообщений за эту дату")
+                    await query.edit_message_text(
+                        f"❌ Суммаризация за {format_date_for_display(date)} не найдена\n\n"
+                        f"📊 Нет сообщений за эту дату"
+                    )
                 return
             
             from infrastructure.telegram import sender
@@ -314,9 +383,17 @@ class SummaryHandlers:
             from infrastructure.telegram.sender import ParseMode
             from shared.utils import format_summary_for_telegram_html_universal
             
+            # Определяем, какой текст публиковать
+            if summary.reflection_text or summary.improved_summary_text:
+                # Публикуем улучшенную версию или все компоненты
+                text_to_publish = summary.improved_summary_text or summary.summary_text
+            else:
+                # Публикуем обычную суммаризацию
+                text_to_publish = summary.summary_text
+            
             if use_html:
                 formatted_parts = format_summary_for_telegram_html_universal(
-                    summary.summary_text, 
+                    text_to_publish, 
                     date, 
                     summary.vk_chat_id
                 )
@@ -324,19 +401,29 @@ class SummaryHandlers:
             else:
                 from shared.utils import format_summary_for_telegram
                 formatted_parts = format_summary_for_telegram(
-                    summary.summary_text, 
+                    text_to_publish, 
                     date, 
                     summary.vk_chat_id
                 )
                 parse_mode = ParseMode.MARKDOWN_V2
             
             for part in formatted_parts:
-                await sender.TelegramMessageSender.safe_send_message(
-                    context.bot,
-                    group_id,
-                    part,
-                    parse_mode=parse_mode
-                )
+                if use_html:
+                    # Для HTML используем прямой вызов bot.send_message
+                    await context.bot.send_message(
+                        chat_id=group_id,
+                        text=part,
+                        parse_mode='HTML',
+                        disable_web_page_preview=True
+                    )
+                else:
+                    # Для Markdown используем safe_send_message
+                    await sender.TelegramMessageSender.safe_send_message(
+                        context.bot,
+                        group_id,
+                        part,
+                        parse_mode=parse_mode
+                    )
             
             from infrastructure.telegram import keyboards
             keyboard = keyboards.summary_result_keyboard(vk_chat_id, date)
@@ -606,6 +693,35 @@ class SummaryHandlers:
             logger.error(f"Ошибка в run_summary_handler: {e}", exc_info=True)
             await query.edit_message_text(format_error_message(e))
     
+    def _convert_scenario_to_steps(self, scenario: str, clean_data_first: bool) -> List[StepType]:
+        """Конвертирует старый формат сценария в новый список шагов"""
+        from domains.ai.models import StepType
+        
+        steps = []
+        
+        # Добавляем очистку данных если нужно
+        if clean_data_first:
+            steps.append(StepType.CLEANING)
+        
+        # Основные шаги в зависимости от сценария
+        if scenario == 'fast':
+            steps.append(StepType.SUMMARIZATION)
+        elif scenario == 'reflection':
+            steps.extend([StepType.SUMMARIZATION, StepType.REFLECTION, StepType.IMPROVEMENT])
+        elif scenario == 'cleaning':
+            steps.extend([StepType.CLEANING, StepType.SUMMARIZATION])
+        elif scenario == 'structured':
+            steps.extend([StepType.SUMMARIZATION, StepType.CLASSIFICATION, StepType.EXTRACTION, StepType.PARENT_SUMMARY])
+        elif scenario == 'with_schedule':
+            steps.extend([StepType.SUMMARIZATION, StepType.SCHEDULE_ANALYSIS])
+        elif scenario == 'full':
+            steps.extend([StepType.CLEANING, StepType.SUMMARIZATION, StepType.REFLECTION, StepType.IMPROVEMENT, StepType.CLASSIFICATION, StepType.EXTRACTION, StepType.SCHEDULE_ANALYSIS, StepType.PARENT_SUMMARY])
+        else:
+            # По умолчанию - только суммаризация
+            steps.append(StepType.SUMMARIZATION)
+        
+        return steps
+
     def _map_scenario_to_analysis_type(self, scenario: str) -> tuple:
         """
         Преобразовать сценарий в параметры AnalysisRequest
@@ -689,48 +805,41 @@ class SummaryHandlers:
             ai_service = ctx.ai_service
             
             # Создаем LLM Logger для логирования запросов/ответов
-            from infrastructure.logging.llm_logger import LLMLogger
-            import os
+            llm_logger = self._create_llm_logger(date, scenario, model, provider, query.from_user.id)
             
-            LLM_LOGS_DIR = os.environ.get('LLM_LOGS_DIR', 'llm_logs')
-            print(f"🔍 DEBUG: Создаем LLM Logger с параметрами:")
-            print(f"   LLM_LOGS_DIR: {LLM_LOGS_DIR}")
-            print(f"   date: {date}")
-            print(f"   scenario: {scenario}")
-            print(f"   model: {model}")
-            print(f"   user_id: {query.from_user.id}")
-            
-            llm_logger = LLMLogger(
-                LLM_LOGS_DIR, 
-                date=date, 
-                scenario=scenario,
-                test_mode=False,
-                model_name=model
-            )
-            llm_logger.set_session_info(provider, model, None, query.from_user.id)
-            logs_path = llm_logger.get_logs_path()
-            print(f"🔍 DEBUG: LLM Logger создан, путь к логам: {logs_path}")
-            logger.info(f"📁 LLM Logger создан: {logs_path}")
+            # Конвертируем старый формат в новый
+            from domains.ai.models import StepType
+            steps = self._convert_scenario_to_steps(scenario, clean_data_first)
             
             analysis_request = AnalysisRequest(
                 messages=messages_data,
                 provider_name=provider,
                 model_id=model,
                 user_id=query.from_user.id,
-                analysis_type=analysis_type,  # ✅ ПРАВИЛЬНО
-                clean_data_first=clean_data_first,  # ✅ Для сценария cleaning
-                llm_logger=llm_logger
+                chat_context={'group_id': 1, 'date': date},  # TODO: получить реальный group_id
+                llm_logger=llm_logger,
+                steps=steps  # ✅ ИСПОЛЬЗУЕМ НОВУЮ АРХИТЕКТУРУ
             )
             
             # Выполняем анализ
             result = await ai_service.analyze_chat(analysis_request)
             
             if result.success:
-                # Сохраняем результат
+                # Извлекаем структурированные данные
+                step_data = self.summary_service.extract_step_results_from_analysis(
+                    result, scenario
+                )
+
+                # Создаем объект Summary с заполненными полями
                 summary = Summary(
                     vk_chat_id=vk_chat_id,
                     date=date,
-                    summary_text=result.result,
+                    summary_text=step_data.get('summary') or result.result,
+                    reflection_text=step_data.get('reflection'),
+                    improved_summary_text=step_data.get('improved'),
+                    classification_data=step_data.get('classification'),
+                    extraction_data=step_data.get('extraction'),
+                    parent_summary_text=step_data.get('parent_summary'),
                     provider_name=result.provider_name,
                     processing_time=result.processing_time,
                     model_provider=provider,
@@ -738,7 +847,7 @@ class SummaryHandlers:
                     scenario_type=scenario,
                     generation_time_seconds=result.processing_time
                 )
-                
+
                 self.summary_service.save_summary(summary)
                 
                 # Маппинг названий сценариев
@@ -752,32 +861,82 @@ class SummaryHandlers:
                 from infrastructure.telegram import keyboards
                 keyboard = keyboards.summary_result_keyboard(vk_chat_id, date)
                 
-                # Формируем полный текст результата
-                result_text = f"✅ Анализ завершен за {result.processing_time:.2f}с\n\n"
-                result_text += f"📋 Сценарий: {scenario_names.get(scenario, scenario)}\n"
-                result_text += f"🤖 Провайдер: {result.provider_name}\n"
-                result_text += f"🧠 Модель: {model}\n"
-                result_text += f"📅 Дата: {date}\n\n"
-                result_text += f"📝 Результат:\n{result.result}"
+                # Определяем, что показывать пользователю
+                display_text = self._get_display_text_for_scenario(
+                    scenario, step_data, result.result
+                )
+                
+                # Формируем чистый результат без метаданных
+                result_text = display_text
                 
                 # Разбиваем на части если нужно
                 from shared.utils import format_message_for_telegram
                 message_parts = format_message_for_telegram(result_text)
                 
-                # Отправляем первую часть с кнопками
-                await query.edit_message_text(
-                    format_success_message(message_parts[0]),
-                    reply_markup=keyboard,
-                    disable_web_page_preview=True
+                # Логируем редактирование сообщения (если включено)
+                from infrastructure.logging.message_logger import TelegramMessageLogger
+                log_path = TelegramMessageLogger.log_outgoing_message(
+                    chat_id=query.message.chat_id,
+                    text=message_parts[0],
+                    action='edit',
+                    parse_mode='Markdown',
+                    message_id=query.message.message_id,
+                    context={
+                        'handler': '_run_actual_analysis',
+                        'scenario': scenario,
+                        'provider': provider,
+                        'model': model,
+                        'is_result': True
+                    }
                 )
+
+                try:
+                    # Отправляем первую часть с кнопками, без обертки format_success_message
+                    await query.edit_message_text(
+                        message_parts[0],
+                        reply_markup=keyboard,
+                        disable_web_page_preview=True,
+                        parse_mode='Markdown'
+                    )
+                    
+                    # Обновляем лог при успехе
+                    if log_path:
+                        TelegramMessageLogger.log_success(log_path, query.message.message_id)
+                        
+                except Exception as e:
+                    # Обновляем лог при ошибке
+                    if log_path:
+                        TelegramMessageLogger.log_error(log_path, str(e))
+                    raise
                 
                 # Отправляем остальные части без кнопок
                 for part in message_parts[1:]:
-                    await context.bot.send_message(
+                    # Логируем (если включено)
+                    from infrastructure.logging.message_logger import TelegramMessageLogger
+                    log_path = TelegramMessageLogger.log_outgoing_message(
                         chat_id=query.message.chat_id,
                         text=part,
-                        disable_web_page_preview=True
+                        action='send',
+                        parse_mode='Markdown',
+                        context={
+                            'handler': '_run_actual_analysis',
+                            'scenario': scenario,
+                            'part_number': message_parts.index(part) + 1
+                        }
                     )
+                    
+                    try:
+                        message = await context.bot.send_message(
+                            chat_id=query.message.chat_id,
+                            text=part,
+                            disable_web_page_preview=True,
+                            parse_mode='Markdown'
+                        )
+                        if log_path:
+                            TelegramMessageLogger.log_success(log_path, message.message_id)
+                    except Exception as e:
+                        if log_path:
+                            TelegramMessageLogger.log_error(log_path, str(e))
             else:
                 from infrastructure.telegram import keyboards
                 keyboard = keyboards.summary_result_keyboard(vk_chat_id, date)
@@ -796,4 +955,561 @@ class SummaryHandlers:
                 format_error_message(e),
                 reply_markup=keyboard
             )
+    
+    def _get_display_text_for_scenario(
+        self, 
+        scenario: str, 
+        step_data: Dict[str, Optional[str]], 
+        fallback_result: str
+    ) -> str:
+        """
+        Выбрать правильный текст для отображения в зависимости от сценария
+        
+        Args:
+            scenario: Тип сценария (fast, reflection, cleaning, structured)
+            step_data: Извлеченные структурированные данные
+            fallback_result: Резервный текст если нет структурированных данных
+            
+        Returns:
+            Текст для отображения пользователю
+        """
+        if scenario == 'reflection':
+            # Для рефлексии показываем только улучшенную версию
+            if step_data.get('improved'):
+                return step_data['improved']
+            # Если нет улучшенной, показываем исходную суммаризацию
+            elif step_data.get('summary'):
+                return step_data['summary']
+        
+        elif scenario == 'structured':
+            # Для структурированного анализа показываем сводку для родителей
+            if step_data.get('parent_summary'):
+                return step_data['parent_summary']
+            # Или исходную суммаризацию
+            elif step_data.get('summary'):
+                return step_data['summary']
+        
+        elif scenario in ['fast', 'cleaning']:
+            # Для быстрой/очищенной показываем суммаризацию
+            if step_data.get('summary'):
+                return step_data['summary']
+        
+        # Fallback на полный результат
+        return fallback_result
+    
+    async def preset_selection_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик выбора пресета"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Парсим: preset_{type}_{vk_chat_id}_{date}
+            parts = query.data.replace('preset_', '', 1).split('_')
+            preset_type = parts[0]
+            date = parts[-1]
+            vk_chat_id = '_'.join(parts[1:-1])
+            
+            await self._handle_preset_selection(update, context, preset_type, vk_chat_id, date)
+            
+        except Exception as e:
+            logger.error(f"Ошибка в preset_selection_handler: {e}", exc_info=True)
+            await query.edit_message_text(format_error_message(e))
+    
+    async def _handle_preset_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE, preset_type: str, vk_chat_id: str, date: str):
+        """Обработка выбора пресета"""
+        query = update.callback_query
+        
+        # Получаем пресет
+        from domains.ai.presets import PresetRegistry
+        preset = PresetRegistry.get_preset(preset_type)
+        
+        if not preset:
+            # Fallback для legacy сценариев
+            legacy_mapping = {
+                'fast': 'fast',
+                'reflection': 'reflection', 
+                'cleaning': 'cleaning',
+                'structured': 'structured'
+            }
+            preset_type = legacy_mapping.get(preset_type, 'fast')
+            preset = PresetRegistry.get_preset(preset_type)
+        
+        # Сохраняем выбранные шаги
+        context.user_data['selected_steps'] = [step.value for step in preset.steps]
+        context.user_data['selected_scenario'] = preset_type  # Для совместимости
+        context.user_data['selected_date'] = date
+        context.user_data['selected_chat_id'] = vk_chat_id
+        
+        # Save scenario selection to database
+        if self.user_service:
+            self.user_service.save_user_ai_settings(
+                update.effective_user.id, 
+                scenario=preset_type
+            )
+        
+        # Проверяем, есть ли уже выбранная модель
+        current_provider = context.user_data.get('confirmed_provider')
+        current_model = context.user_data.get('selected_model_id')
+        
+        if current_provider and current_model and current_provider != 'Не выбрано' and current_model != 'Не выбрано':
+            # Модель уже выбрана - запускаем анализ сразу
+            await query.edit_message_text(
+                f"🚀 Запускаем анализ...\n\n"
+                f"📋 Пресет: {preset.icon} {preset.name}\n"
+                f"🤖 Провайдер: {current_provider}\n"
+                f"🧠 Модель: {current_model}\n"
+                f"📅 Дата: {date}\n"
+                f"🔧 Шаги: {', '.join([step.value for step in preset.steps])}\n\n"
+                f"Это может занять несколько минут."
+            )
+            
+            # Запускаем анализ с новыми шагами
+            await self._run_analysis_with_steps(query, vk_chat_id, date, preset.steps, current_provider, current_model, context)
+        else:
+            # Модель не выбрана - показываем выбор модели
+            await self._show_model_selection_for_preset(update, context, preset)
+    
+    async def custom_pipeline_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик конструктора пользовательского pipeline"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Парсим: custom_pipeline_{vk_chat_id}_{date}
+            parts = query.data.replace('custom_pipeline_', '', 1).split('_')
+            date = parts[-1]
+            vk_chat_id = '_'.join(parts[:-1])
+            
+            # Загружаем сохраненную конфигурацию или используем текущую
+            from domains.ai.models import StepType
+            if 'custom_steps' not in context.user_data:
+                # Загружаем из БД
+                context.user_data['custom_steps'] = await self._load_custom_steps(update.effective_user.id)
+            
+            selected_steps = context.user_data.get('custom_steps', [StepType.SUMMARIZATION])
+            
+            # Сохраняем контекст
+            context.user_data['selected_date'] = date
+            context.user_data['selected_chat_id'] = vk_chat_id
+            
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.custom_pipeline_keyboard(vk_chat_id, date, selected_steps)
+            
+            await query.edit_message_text(
+                "🎨 [Конструктор анализа]\n\n"
+                "Выберите шаги для выполнения:\n"
+                "(Нажмите на шаг чтобы включить/выключить)\n\n"
+                "💡 Ваша последняя конфигурация загружена автоматически",
+                reply_markup=keyboard
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в custom_pipeline_handler: {e}", exc_info=True)
+            await query.edit_message_text(format_error_message(e))
+    
+    async def toggle_step_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Toggle шага в конструкторе"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Парсим: toggle_step_{step_name}_{vk_chat_id}_{date}
+            parts = query.data.replace('toggle_step_', '', 1).split('_')
+            step_name = parts[0]
+            date = parts[-1]
+            vk_chat_id = '_'.join(parts[1:-1])
+            
+            from domains.ai.models import StepType
+            step_type = StepType(step_name)
+            
+            custom_steps = context.user_data.get('custom_steps', [StepType.SUMMARIZATION])
+            
+            if step_type in custom_steps:
+                custom_steps.remove(step_type)
+            else:
+                custom_steps.append(step_type)
+            
+            context.user_data['custom_steps'] = custom_steps
+            
+            # Перерисовываем меню
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.custom_pipeline_keyboard(vk_chat_id, date, custom_steps)
+            
+            await query.edit_message_text(
+                "🎨 [Конструктор анализа]\n\n"
+                "Выберите шаги для выполнения:\n"
+                "(Нажмите на шаг чтобы включить/выключить)",
+                reply_markup=keyboard
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в toggle_step_handler: {e}", exc_info=True)
+            await query.edit_message_text(format_error_message(e))
+    
+    async def _run_analysis_with_steps(self, query, vk_chat_id: str, date: str, steps, provider: str, model: str, context: ContextTypes.DEFAULT_TYPE):
+        """Запуск анализа с новыми шагами"""
+        try:
+            # Получаем сообщения
+            from core.app_context import get_app_context
+            ctx = get_app_context()
+            messages = ctx.chat_service.get_messages_by_date(vk_chat_id, date)
+            if not messages:
+                await query.edit_message_text("❌ Нет сообщений для анализа")
+                return
+            
+            # Конвертируем сообщения в словари
+            messages_data = [msg.model_dump() if hasattr(msg, 'model_dump') else msg.dict() for msg in messages]
+            
+            # Определить scenario на основе выбранных шагов
+            scenario = self._get_scenario_name_from_steps(steps)
+            
+            # Создать llm_logger с правильными параметрами
+            llm_logger = self._create_llm_logger(date, scenario, model, provider, context.user_data.get('user_id'))
+            
+            # Создаем запрос с новыми шагами
+            from domains.ai.models import AnalysisRequest, StepType
+            request = AnalysisRequest(
+                messages=messages_data,
+                provider_name=provider,
+                model_id=model,
+                user_id=context.user_data.get('user_id'),
+                chat_context={'group_id': 1, 'date': date},  # TODO: получить реальный group_id
+                llm_logger=llm_logger,  # Используем созданный logger
+                steps=steps
+            )
+            
+            # Запускаем анализ
+            result = await ctx.ai_service.analyze_chat(request)
+            
+            if result.success:
+                # Показываем результат
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.summary_result_keyboard(vk_chat_id, date)
+                
+                # Извлекаем структурированные данные из результата
+                step_data = self.summary_service.extract_step_results_from_analysis(
+                    result, scenario
+                )
+                
+                # Определяем, что показывать пользователю (только финальный результат)
+                display_text = self._get_display_text_for_scenario(
+                    scenario, step_data, result.result
+                )
+                
+                # Создаем объект Summary с заполненными полями
+                summary = Summary(
+                    vk_chat_id=vk_chat_id,
+                    date=date,
+                    summary_text=step_data.get('summary') or result.result,
+                    reflection_text=step_data.get('reflection'),
+                    improved_summary_text=step_data.get('improved'),
+                    classification_data=step_data.get('classification'),
+                    extraction_data=step_data.get('extraction'),
+                    parent_summary_text=step_data.get('parent_summary'),
+                    provider_name=result.provider_name,
+                    processing_time=result.processing_time,
+                    model_provider=provider,
+                    model_id=model,
+                    scenario_type=scenario,
+                    generation_time_seconds=result.processing_time
+                )
+
+                # Сохраняем суммаризацию в БД
+                self.summary_service.save_summary(summary)
+                logger.info(f"✅ Суммаризация сохранена в БД: {vk_chat_id}, {date}")
+                
+                result_text = f"✅ Анализ завершен за {result.processing_time:.2f}с\n\n"
+                result_text += f"🔧 Выполненные шаги: {', '.join(result.metadata.get('executed_steps', []))}\n"
+                result_text += f"🤖 Провайдер: {result.provider_name}\n"
+                result_text += f"🧠 Модель: {model}\n"
+                result_text += f"📅 Дата: {date}\n\n"
+                result_text += f"📝 Результат:\n{display_text}"
+                
+                # Разбиваем на части если нужно
+                from shared.utils import format_message_for_telegram
+                message_parts = format_message_for_telegram(result_text)
+                
+                # Логируем редактирование сообщения (если включено)
+                from infrastructure.logging.message_logger import TelegramMessageLogger
+                log_path = TelegramMessageLogger.log_outgoing_message(
+                    chat_id=query.message.chat_id,
+                    text=format_success_message(message_parts[0]),
+                    action='edit',
+                    parse_mode='None',
+                    message_id=query.message.message_id,
+                    context={'handler': 'preset_selection_handler'}
+                )
+
+                try:
+                    # Отправляем первую часть с кнопками
+                    await query.edit_message_text(
+                        format_success_message(message_parts[0]),
+                        reply_markup=keyboard,
+                        disable_web_page_preview=True
+                    )
+                    if log_path:
+                        TelegramMessageLogger.log_success(log_path, query.message.message_id)
+                except Exception as e:
+                    if log_path:
+                        TelegramMessageLogger.log_error(log_path, str(e))
+                    raise
+                
+                # Отправляем остальные части без кнопок
+                for part in message_parts[1:]:
+                    # Логируем (если включено)
+                    from infrastructure.logging.message_logger import TelegramMessageLogger
+                    log_path = TelegramMessageLogger.log_outgoing_message(
+                        chat_id=query.message.chat_id,
+                        text=part,
+                        action='send',
+                        parse_mode='None',
+                        context={
+                            'handler': 'preset_selection_handler',
+                            'scenario': scenario,
+                            'part_number': message_parts.index(part) + 1
+                        }
+                    )
+                    
+                    try:
+                        message = await context.bot.send_message(
+                            chat_id=query.message.chat_id,
+                            text=format_success_message(part),
+                            disable_web_page_preview=True
+                        )
+                        if log_path:
+                            TelegramMessageLogger.log_success(log_path, message.message_id)
+                    except Exception as e:
+                        if log_path:
+                            TelegramMessageLogger.log_error(log_path, str(e))
+            else:
+                from infrastructure.telegram import keyboards
+                keyboard = keyboards.summary_result_keyboard(vk_chat_id, date)
+                
+                await query.edit_message_text(
+                    f"❌ Ошибка анализа: {result.error}",
+                    reply_markup=keyboard
+                )
+                
+        except Exception as e:
+            logger.error(f"Ошибка в _run_analysis_with_steps: {e}")
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.summary_result_keyboard(vk_chat_id, date)
+            
+            await query.edit_message_text(
+                format_error_message(e),
+                reply_markup=keyboard
+            )
+    
+    async def run_custom_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик запуска кастомного анализа"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Парсим: run_custom_{vk_chat_id}_{date}
+            parts = query.data.replace('run_custom_', '', 1).split('_')
+            date = parts[-1]
+            vk_chat_id = '_'.join(parts[:-1])
+            
+            # Получаем выбранные шаги
+            from domains.ai.models import StepType
+            custom_steps = context.user_data.get('custom_steps', [StepType.SUMMARIZATION])
+            
+            # Валидация
+            if not custom_steps:
+                await query.edit_message_text("❌ Не выбрано ни одного шага")
+                return
+            
+            # Сохраняем конфигурацию
+            await self._save_custom_steps(update.effective_user.id, custom_steps)
+            
+            # Проверяем модель
+            current_provider = context.user_data.get('confirmed_provider')
+            current_model = context.user_data.get('selected_model_id')
+            
+            if current_provider and current_model and current_provider != 'Не выбрано' and current_model != 'Не выбрано':
+                # Запускаем анализ
+                steps_display = ', '.join([s.value for s in custom_steps])
+                await query.edit_message_text(
+                    f"🚀 Запускаем кастомный анализ...\n\n"
+                    f"🔧 Шаги: {steps_display}\n"
+                    f"🤖 Провайдер: {current_provider}\n"
+                    f"🧠 Модель: {current_model}\n"
+                    f"📅 Дата: {date}\n\n"
+                    f"💾 Конфигурация сохранена автоматически\n\n"
+                    f"Это может занять несколько минут."
+                )
+                
+                await self._run_analysis_with_steps(query, vk_chat_id, date, custom_steps, current_provider, current_model, context)
+            else:
+                # Показываем выбор модели
+                await query.edit_message_text(
+                    "⚠️ Сначала выберите AI провайдера и модель в настройках\n\n"
+                    "💾 Ваша конфигурация сохранена",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("⚙️ Настройки AI", callback_data="select_ai_provider"),
+                        InlineKeyboardButton("🔙 Назад", callback_data=f"custom_pipeline_{vk_chat_id}_{date}")
+                    ]])
+                )
+        
+        except Exception as e:
+            logger.error(f"Ошибка в run_custom_handler: {e}", exc_info=True)
+            await query.edit_message_text(format_error_message(e))
+    
+    async def _save_custom_steps(self, user_id: int, steps: list):
+        """Сохранить конфигурацию конструктора"""
+        import json
+        
+        if self.user_service:
+            try:
+                steps_json = json.dumps([s.value if hasattr(s, 'value') else s for s in steps])
+                self.user_service.save_user_ai_settings(user_id, custom_steps=steps_json)
+                logger.info(f"💾 Сохранена конфигурация конструктора для пользователя {user_id}: {steps_json}")
+            except Exception as e:
+                logger.error(f"Ошибка сохранения конфигурации: {e}")
+    
+    async def _load_custom_steps(self, user_id: int) -> list:
+        """Загрузить сохраненную конфигурацию конструктора"""
+        import json
+        
+        if self.user_service:
+            try:
+                settings = self.user_service.get_user_ai_settings(user_id)
+                if settings and 'custom_steps' in settings:
+                    from domains.ai.models import StepType
+                    steps_list = json.loads(settings['custom_steps'])
+                    steps = [StepType(s) for s in steps_list]
+                    logger.info(f"📂 Загружена конфигурация конструктора для пользователя {user_id}: {steps}")
+                    return steps
+            except Exception as e:
+                logger.error(f"Ошибка загрузки конфигурации: {e}")
+        
+        # По умолчанию только суммаризация
+        from domains.ai.models import StepType
+        return [StepType.SUMMARIZATION]
+    
+    def _create_llm_logger(self, date: str, scenario: str, model: str, provider: str, user_id: int):
+        """Создать LLM Logger с правильными параметрами"""
+        from infrastructure.logging.llm_logger import LLMLogger
+        import os
+        
+        LLM_LOGS_DIR = os.environ.get('LLM_LOGS_DIR', 'llm_logs')
+        
+        llm_logger = LLMLogger(
+            LLM_LOGS_DIR,
+            date=date,
+            scenario=scenario,
+            test_mode=False,
+            model_name=model
+        )
+        llm_logger.set_session_info(provider, model, None, user_id)
+        
+        logger.info(f"📁 LLM Logger создан: {llm_logger.get_logs_path()}")
+        
+        return llm_logger
+    
+    def _get_scenario_name_from_steps(self, steps):
+        """Получить имя сценария на основе шагов"""
+        from domains.ai.models import StepType
+        
+        if len(steps) == 1 and steps[0] == StepType.SUMMARIZATION:
+            return "fast"
+        elif set(steps) == {StepType.SUMMARIZATION, StepType.REFLECTION, StepType.IMPROVEMENT}:
+            return "reflection"
+        elif StepType.CLEANING in steps and StepType.SUMMARIZATION in steps:
+            return "cleaning"
+        elif any(s in steps for s in [StepType.CLASSIFICATION, StepType.EXTRACTION]):
+            return "structured"
+        else:
+            # Генерируем имя из списка шагов
+            return "custom_" + "_".join([s.value for s in steps])
+    
+    async def save_custom_preset_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик сохранения пользовательского пресета"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Парсим: save_custom_preset_{vk_chat_id}_{date}
+            parts = query.data.replace('save_custom_preset_', '', 1).split('_')
+            date = parts[-1]
+            vk_chat_id = '_'.join(parts[:-1])
+            
+            # Получаем выбранные шаги
+            from domains.ai.models import StepType
+            custom_steps = context.user_data.get('custom_steps', [StepType.SUMMARIZATION])
+            
+            if not custom_steps:
+                await query.edit_message_text("❌ Не выбрано ни одного шага для сохранения")
+                return
+            
+            # Показываем форму для ввода названия пресета
+            await query.edit_message_text(
+                "💾 [Сохранение пресета]\n\n"
+                f"Выбранные шаги: {', '.join([s.value for s in custom_steps])}\n\n"
+                "Введите название для вашего пресета:",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Назад", callback_data=f"custom_pipeline_{vk_chat_id}_{date}")
+                ]])
+            )
+            
+            # Устанавливаем состояние ожидания названия
+            context.user_data['waiting_for_preset_name'] = True
+            context.user_data['preset_steps'] = custom_steps
+            context.user_data['preset_vk_chat_id'] = vk_chat_id
+            context.user_data['preset_date'] = date
+            
+        except Exception as e:
+            logger.error(f"Ошибка в save_custom_preset_handler: {e}", exc_info=True)
+            await query.edit_message_text(format_error_message(e))
+    
+    async def handle_preset_name_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка ввода названия пресета"""
+        if not context.user_data.get('waiting_for_preset_name'):
+            return
+        
+        try:
+            preset_name = update.message.text.strip()
+            if not preset_name:
+                await update.message.reply_text("❌ Название не может быть пустым")
+                return
+            
+            # Получаем данные из context
+            steps = context.user_data.get('preset_steps', [])
+            vk_chat_id = context.user_data.get('preset_vk_chat_id')
+            date = context.user_data.get('preset_date')
+            
+            # Сохраняем пресет (пока в context, позже можно в БД)
+            user_id = update.effective_user.id
+            if 'user_presets' not in context.user_data:
+                context.user_data['user_presets'] = {}
+            
+            # Создаем уникальный ID для пресета
+            preset_id = f"user_{user_id}_{int(time.time())}"
+            
+            context.user_data['user_presets'][preset_id] = {
+                'name': preset_name,
+                'steps': [s.value for s in steps],
+                'created_at': time.time()
+            }
+            
+            # Очищаем состояние
+            context.user_data.pop('waiting_for_preset_name', None)
+            context.user_data.pop('preset_steps', None)
+            context.user_data.pop('preset_vk_chat_id', None)
+            context.user_data.pop('preset_date', None)
+            
+            # Показываем успех
+            await update.message.reply_text(
+                f"✅ Пресет \"{preset_name}\" сохранен!\n\n"
+                f"Шаги: {', '.join([s.value for s in steps])}\n\n"
+                "Теперь вы можете использовать его в меню \"Мои сохраненные пресеты\"",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 К конструктору", callback_data=f"custom_pipeline_{vk_chat_id}_{date}")
+                ]])
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в handle_preset_name_input: {e}", exc_info=True)
+            await update.message.reply_text(format_error_message(e))
 

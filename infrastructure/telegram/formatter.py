@@ -155,6 +155,25 @@ class TelegramFormatter:
         return escaped_text
     
     @staticmethod
+    def escape_html_content(text: str) -> str:
+        """
+        Экранирует только содержимое HTML тегов, не сами теги
+        
+        Args:
+            text: Текст для экранирования
+            
+        Returns:
+            Экранированный текст (HTML теги остаются нетронутыми)
+        """
+        if not text:
+            return text
+            
+        # Экранируем только &, ", ' но НЕ < и > (они нужны для HTML тегов)
+        escaped_text = text.replace('&', '&amp;').replace('"', '&quot;').replace("'", '&#39;')
+        
+        return escaped_text
+    
+    @staticmethod
     def format_bold(text: str, parse_mode: str = "markdown_v2") -> str:
         """
         Форматирует текст как жирный

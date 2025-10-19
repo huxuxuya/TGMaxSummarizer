@@ -45,6 +45,16 @@ class TelegramMessageSender:
         logger.debug(f"Original text:\n{text}")
         logger.debug(f"Content type: {content_type}")
         
+        # Логируем исходящее сообщение (если включено)
+        log_path = TelegramMessageLogger.log_outgoing_message(
+            chat_id=query.message.chat_id,
+            text=text,
+            action='edit',
+            parse_mode=parse_mode.value if hasattr(parse_mode, 'value') else str(parse_mode),
+            content_type=content_type.value if hasattr(content_type, 'value') else str(content_type),
+            message_id=query.message.message_id
+        )
+        
         # Выбираем метод экранирования в зависимости от parse_mode и content_type
         if parse_mode == ParseMode.MARKDOWN_V2:
             # Обработка MarkdownV2
@@ -123,15 +133,16 @@ class TelegramMessageSender:
             logger.debug(f"✅ Message edited successfully with {parse_mode}")
             
             # Обновляем лог при успехе
-            TelegramMessageLogger.log_success(log_path, query.message.message_id if query.message else None)
+            if log_path:
+                TelegramMessageLogger.log_success(log_path, query.message.message_id if query.message else None)
             return True
             
         except Exception as e:
             logger.error(f"❌ Message editing failed: {e}")
-            logger.error(f"Failed text:\n{formatted_text}")
-            
             # Обновляем лог при ошибке
-            TelegramMessageLogger.log_error(log_path, str(e))
+            if log_path:
+                TelegramMessageLogger.log_error(log_path, str(e))
+            logger.error(f"Failed text:\n{formatted_text}")
             raise e
     
     # Старые функции удалены - теперь используем smart_escape_markdown_v2 из TelegramFormatter
@@ -503,18 +514,16 @@ class TelegramMessageSender:
             
             logger.debug(f"Text for HTML:\n{formatted_text}")
         
-        # Создаем метаданные для логирования
-        metadata = TelegramMessageLogger.create_metadata(
+        # Логируем сообщение (если включено)
+        log_path = TelegramMessageLogger.log_outgoing_message(
             chat_id=chat_id,
-            action="send",
-            parse_mode=parse_mode.value if parse_mode else "None",
-            content_type=content_type.value,
-            original_text=text,
-            formatted_text=formatted_text
+            text=text,
+            action='send',
+            parse_mode=parse_mode.value if hasattr(parse_mode, 'value') else str(parse_mode),
+            content_type=content_type.value if hasattr(content_type, 'value') else str(content_type),
+            formatted_text=formatted_text,
+            context=kwargs.get('log_context', {})
         )
-        
-        # Логируем сообщение перед отправкой
-        log_path = TelegramMessageLogger.log_message(metadata)
         
         try:
             if parse_mode == ParseMode.MARKDOWN_V2:
@@ -551,16 +560,18 @@ class TelegramMessageSender:
             
             logger.debug("✅ Message sent successfully")
             
-            # Обновляем лог при успехе
-            TelegramMessageLogger.log_success(log_path, message.message_id if message else None)
+            # Обновляем лог при успехе (только если лог был создан)
+            if log_path:
+                TelegramMessageLogger.log_success(log_path, message.message_id if message else None)
             return True
             
         except Exception as e:
             logger.error(f"❌ SEND_MESSAGE parsing failed: {e}")
             logger.error(f"Failed text:\n{text}")
             
-            # Обновляем лог при ошибке
-            TelegramMessageLogger.log_error(log_path, str(e))
+            # Обновляем лог при ошибке (только если лог был создан)
+            if log_path:
+                TelegramMessageLogger.log_error(log_path, str(e))
             
             # Fallback: отправляем как обычный текст
             try:

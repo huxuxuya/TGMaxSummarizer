@@ -39,9 +39,7 @@ class ChatGPTProvider(BaseAIProvider):
             # Форматируем для анализа
             formatted_text = self.format_messages_for_analysis(optimized_messages)
             
-            # Логируем форматированные сообщения (ПОСЛЕ оптимизации)
-            if self.llm_logger:
-                self.llm_logger.log_formatted_messages(formatted_text, len(optimized_messages))
+            # Логирование форматированных сообщений теперь выполняется в StepExecutor
             
             self.logger.info(f"📊 Статистика для ChatGPT:")
             self.logger.info(f"   Всего сообщений: {len(messages)}")
@@ -53,9 +51,7 @@ class ChatGPTProvider(BaseAIProvider):
             
             summary = await self._call_chatgpt_api(formatted_text)
             
-            # Логируем ответ если логгер установлен
-            if self.llm_logger and summary:
-                self.llm_logger.log_llm_response(summary, "summarization")
+            # Логирование ответа теперь выполняется в StepExecutor
             
             if summary:
                 self.logger.info("✅ Суммаризация получена от ChatGPT")
@@ -116,11 +112,7 @@ class ChatGPTProvider(BaseAIProvider):
             self.logger.debug(f"Prompt preview: {prompt[:200]}...")
             self.logger.debug(f"=== END INPUT ===")
             
-            # Логируем запрос если логгер установлен
-            if self.llm_logger:
-                # Определяем тип запроса по содержимому промпта
-                request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
-                self.llm_logger.log_llm_request(prompt, request_type)
+            # Логирование теперь выполняется в StepExecutor
             
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -137,11 +129,7 @@ class ChatGPTProvider(BaseAIProvider):
                 self.logger.debug(f"Response preview: {content[:200]}...")
                 self.logger.debug(f"=== END OUTPUT ===")
                 
-                # Логируем ответ если логгер установлен
-                if self.llm_logger:
-                    # Определяем тип ответа по содержимому промпта
-                    request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
-                    self.llm_logger.log_llm_response(content, request_type)
+                # Логирование ответа теперь выполняется в StepExecutor
                 
                 return content
             else:
@@ -205,9 +193,7 @@ class ChatGPTProvider(BaseAIProvider):
             from shared.prompts import PromptTemplates
             prompt = PromptTemplates.get_summarization_prompt(text, 'chatgpt')
             
-            # Логируем ПОЛНЫЙ промпт (с системным сообщением)
-            if self.llm_logger:
-                self.llm_logger.log_llm_request(prompt, "summarization")
+            # Логирование промпта теперь выполняется в StepExecutor
 
             self.logger.info(f"🔗 Отправляем запрос в ChatGPT")
             self.logger.info(f"📝 Длина текста: {len(text)} символов")

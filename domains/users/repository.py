@@ -95,6 +95,7 @@ class UserPreferencesRepository(BaseRepository):
                 confirmed_provider TEXT DEFAULT 'openrouter',
                 selected_model_id TEXT DEFAULT NULL,
                 default_scenario TEXT DEFAULT 'fast',
+                custom_steps TEXT DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
@@ -129,6 +130,11 @@ class UserPreferencesRepository(BaseRepository):
                 self.execute_update(
                     "ALTER TABLE user_ai_preferences ADD COLUMN default_scenario TEXT DEFAULT 'fast'"
                 )
+            
+            if 'custom_steps' not in column_names:
+                self.execute_update(
+                    "ALTER TABLE user_ai_preferences ADD COLUMN custom_steps TEXT DEFAULT NULL"
+                )
                 
         except Exception as e:
             # Игнорируем ошибки миграции, так как таблица может не существовать
@@ -139,8 +145,8 @@ class UserPreferencesRepository(BaseRepository):
         query = """
             INSERT OR REPLACE INTO user_ai_preferences 
             (user_id, default_provider, preferred_providers, ollama_model, 
-             confirmed_provider, selected_model_id, default_scenario, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+             confirmed_provider, selected_model_id, default_scenario, custom_steps, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """
         preferred_providers_json = json.dumps(preferences.preferred_providers)
         affected = self.execute_update(query, (
@@ -150,7 +156,8 @@ class UserPreferencesRepository(BaseRepository):
             preferences.ollama_model,
             preferences.confirmed_provider,
             preferences.selected_model_id,
-            preferences.default_scenario
+            preferences.default_scenario,
+            preferences.custom_steps
         ))
         return affected > 0
     
@@ -158,7 +165,7 @@ class UserPreferencesRepository(BaseRepository):
         """Получить предпочтения пользователя"""
         query = """
             SELECT default_provider, preferred_providers, ollama_model,
-                   confirmed_provider, selected_model_id, default_scenario
+                   confirmed_provider, selected_model_id, default_scenario, custom_steps
             FROM user_ai_preferences
             WHERE user_id = ?
         """
@@ -177,7 +184,8 @@ class UserPreferencesRepository(BaseRepository):
                 ollama_model=row['ollama_model'],
                 confirmed_provider=row['confirmed_provider'] or 'openrouter',
                 selected_model_id=row['selected_model_id'],
-                default_scenario=row['default_scenario'] or 'fast'
+                default_scenario=row['default_scenario'] or 'fast',
+                custom_steps=row['custom_steps']
             )
         return None
 

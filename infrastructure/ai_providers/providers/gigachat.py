@@ -40,9 +40,7 @@ class GigaChatProvider(BaseAIProvider):
             # Форматируем для анализа
             formatted_text = self.format_messages_for_analysis(optimized_messages)
             
-            # Логируем форматированные сообщения (ПОСЛЕ оптимизации)
-            if self.llm_logger:
-                self.llm_logger.log_formatted_messages(formatted_text, len(optimized_messages))
+            # Логирование форматированных сообщений теперь выполняется в StepExecutor
             
             self.logger.info(f"📊 Статистика для GigaChat:")
             self.logger.info(f"   Всего сообщений: {len(messages)}")
@@ -54,9 +52,7 @@ class GigaChatProvider(BaseAIProvider):
             
             summary = await self._call_gigachat_api_for_summarization(formatted_text)
             
-            # Логируем ответ если логгер установлен
-            if self.llm_logger and summary:
-                self.llm_logger.log_llm_response(summary, "summarization")
+            # Логирование ответа теперь выполняется в StepExecutor
             
             if summary:
                 self.logger.info("✅ Суммаризация получена от GigaChat")
@@ -110,11 +106,7 @@ class GigaChatProvider(BaseAIProvider):
                 self.logger.error("❌ Не удалось получить токен доступа GigaChat")
                 return None
             
-            # Логируем запрос если логгер установлен
-            if self.llm_logger:
-                # Определяем тип запроса по содержимому промпта
-                request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
-                self.llm_logger.log_llm_request(prompt, request_type)
+            # Логирование теперь выполняется в StepExecutor
             
             # Execute API call with provided prompt (NO MODIFICATION!)
             response = await self._execute_api_call(prompt, temperature=0.3, max_tokens=2000)
@@ -126,11 +118,7 @@ class GigaChatProvider(BaseAIProvider):
                 self.logger.debug(f"Response preview: {response[:200]}...")
                 self.logger.debug(f"=== END OUTPUT ===")
                 
-                # Логируем ответ если логгер установлен
-                if self.llm_logger:
-                    # Определяем тип ответа по содержимому промпта
-                    request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
-                    self.llm_logger.log_llm_response(response, request_type)
+                # Логирование ответа теперь выполняется в StepExecutor
                 
                 return response
             else:
@@ -326,9 +314,7 @@ class GigaChatProvider(BaseAIProvider):
         from shared.prompts import PromptTemplates
         prompt = PromptTemplates.get_summarization_prompt(text, 'gigachat')
         
-        # Логируем ПОЛНЫЙ промпт (с системным сообщением)
-        if self.llm_logger:
-            self.llm_logger.log_llm_request(prompt, "summarization")
+        # Логирование промпта теперь выполняется в StepExecutor
 
         # Execute API call with summarization prompt
         return await self._execute_api_call(prompt, temperature=0.7, max_tokens=1000)

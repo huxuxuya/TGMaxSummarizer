@@ -131,6 +131,16 @@ class MessageRepository(BaseRepository):
         
         return messages
     
+    def get_messages_count_for_date(self, vk_chat_id: str, date: str) -> int:
+        """Получить количество сообщений за определенную дату"""
+        query = """
+            SELECT COUNT(*) as count
+            FROM messages 
+            WHERE vk_chat_id = ? AND date = ?
+        """
+        results = self.execute_query(query, (vk_chat_id, date))
+        return results[0]['count'] if results else 0
+    
     def get_last_message_timestamp(self, vk_chat_id: str) -> Optional[int]:
         """Получить timestamp последнего сообщения в чате"""
         query = """

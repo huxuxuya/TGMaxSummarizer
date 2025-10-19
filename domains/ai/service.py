@@ -1,9 +1,10 @@
 from typing import List, Dict, Any, Optional
-from .models import AnalysisRequest, AnalysisResult, ProviderInfo, AnalysisType, PipelineContext
+from .models import AnalysisRequest, AnalysisResult, ProviderInfo, AnalysisType, PipelineContext, StepType
 from .pipelines import (
     SummarizationPipeline, ReflectionPipeline, 
     StructuredAnalysisPipeline, DataCleaningPipeline
 )
+from .steps import StepExecutor
 from core.database.connection import DatabaseConnection
 from core.exceptions import AIProviderError, ValidationError
 import logging
@@ -42,35 +43,52 @@ class AIService:
                 provider=provider
             )
             
-            if request.clean_data_first:
-                cleaning_result = await self._run_cleaning_pipeline(context)
-                if not cleaning_result.success:
-                    return cleaning_result
-                
-                cleaned_messages = cleaning_result.metadata.get("cleaned_messages", [])
-                if not cleaned_messages:
-                    raise ValidationError("После очистки не осталось сообщений")
-                
-                context.request.messages = cleaned_messages
+            # НОВЫЙ ПОДХОД: выполнение списка шагов
+            if request.steps:
+                logger.info(f"🚀 Запуск композиционного анализа: {[s.value for s in request.steps]}")
+                executor = StepExecutor(context)
+                return await executor.execute_steps(request.steps)
             
-            if request.analysis_type == AnalysisType.SUMMARIZATION:
-                return await self._run_summarization_pipeline(context)
-            elif request.analysis_type == AnalysisType.REFLECTION:
-                return await self._run_reflection_pipeline(context)
-            elif request.analysis_type == AnalysisType.STRUCTURED:
-                return await self._run_structured_pipeline(context)
+            # Legacy - конвертируем старый формат в новый
+            elif request.analysis_type:
+                steps = self._convert_legacy_to_steps(request)
+                logger.info(f"🔄 Конвертация legacy в композиционный: {[s.value for s in steps]}")
+                executor = StepExecutor(context)
+                return await executor.execute_steps(steps)
+            
+            # По умолчанию
             else:
-                raise ValidationError(f"Неподдерживаемый тип анализа: {request.analysis_type}")
-                
+                logger.info("🚀 Запуск анализа по умолчанию (суммаризация)")
+                executor = StepExecutor(context)
+                return await executor.execute_steps([StepType.SUMMARIZATION])
+            
         except Exception as e:
-            logger.error(f"Ошибка анализа чата: {e}")
+            logger.error(f"❌ Ошибка анализа: {e}")
             return AnalysisResult(
                 success=False,
                 error=str(e),
                 provider_name=request.provider_name,
                 model_id=request.model_id,
-                analysis_type=request.analysis_type
+                analysis_type=request.analysis_type or AnalysisType.SUMMARIZATION
             )
+    
+    def _convert_legacy_to_steps(self, request: AnalysisRequest) -> List[StepType]:
+        """Конвертация старого формата в новый"""
+        steps = []
+        
+        if request.clean_data_first:
+            steps.append(StepType.CLEANING)
+        
+        if request.analysis_type == AnalysisType.SUMMARIZATION:
+            steps.append(StepType.SUMMARIZATION)
+        elif request.analysis_type == AnalysisType.REFLECTION:
+            steps.extend([StepType.SUMMARIZATION, StepType.REFLECTION, StepType.IMPROVEMENT])
+        elif request.analysis_type == AnalysisType.STRUCTURED:
+            steps.extend([StepType.CLASSIFICATION, StepType.EXTRACTION, StepType.PARENT_SUMMARY])
+        elif request.analysis_type == AnalysisType.CLEANING:
+            steps.extend([StepType.CLEANING, StepType.SUMMARIZATION])
+        
+        return steps
     
     async def _get_provider(self, provider_name: str, model_id: Optional[str] = None):
         """Получить провайдер"""

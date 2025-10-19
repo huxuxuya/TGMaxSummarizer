@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from .models import User, UserPreferences, UserGroup
 from .repository import UserRepository, UserPreferencesRepository, UserOpenRouterRepository, UserLastChatRepository
 from ..chats.repository import GroupUserRepository
@@ -90,7 +90,7 @@ class UserService:
         else:
             print(f"🔍 DEBUG: Нет предпочтений для user_id {user_id}")
     
-    def save_user_ai_settings(self, user_id: int, provider: str = None, model_id: str = None, scenario: str = None) -> bool:
+    def save_user_ai_settings(self, user_id: int, provider: str = None, model_id: str = None, scenario: str = None, custom_steps: str = None) -> bool:
         """Сохранить настройки AI пользователя (частичное обновление)"""
         preferences = self.get_user_preferences(user_id)
         if not preferences:
@@ -103,8 +103,23 @@ class UserService:
             preferences.selected_model_id = model_id
         if scenario is not None:
             preferences.default_scenario = scenario
+        if custom_steps is not None:
+            preferences.custom_steps = custom_steps
 
         return self.update_user_preferences(preferences)
+    
+    def get_user_ai_settings(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Получить настройки AI пользователя"""
+        preferences = self.get_user_preferences(user_id)
+        if not preferences:
+            return None
+        
+        return {
+            'confirmed_provider': preferences.confirmed_provider,
+            'selected_model_id': preferences.selected_model_id,
+            'default_scenario': preferences.default_scenario,
+            'custom_steps': preferences.custom_steps
+        }
     
     def clear_user_ai_settings(self, user_id: int) -> bool:
         """Очистить настройки AI пользователя"""

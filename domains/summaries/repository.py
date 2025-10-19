@@ -27,6 +27,9 @@ class SummaryRepository(BaseRepository):
                 model_id TEXT,
                 scenario_type TEXT,
                 generation_time_seconds REAL,
+                classification_data TEXT,
+                extraction_data TEXT,
+                parent_summary_text TEXT,
                 UNIQUE(vk_chat_id, date, summary_type)
             )
         """
@@ -36,10 +39,11 @@ class SummaryRepository(BaseRepository):
         query = """
             INSERT OR REPLACE INTO summaries (
                 vk_chat_id, date, summary_text, summary_type, 
-                reflection_text, improved_summary_text, provider_name, 
-                provider_version, processing_time, model_provider, 
-                model_id, scenario_type, generation_time_seconds
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                provider_name, provider_version, processing_time, 
+                reflection_text, improved_summary_text, 
+                classification_data, extraction_data, parent_summary_text,
+                model_provider, model_id, scenario_type, generation_time_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         # Handle both enum and string types for summary_type
         summary_type_value = summary.summary_type.value if hasattr(summary.summary_type, 'value') else str(summary.summary_type)
@@ -49,11 +53,14 @@ class SummaryRepository(BaseRepository):
             summary.date,
             summary.summary_text,
             summary_type_value,
-            summary.reflection_text,
-            summary.improved_summary_text,
             summary.provider_name,
             summary.provider_version,
             summary.processing_time,
+            summary.reflection_text,
+            summary.improved_summary_text,
+            summary.classification_data,
+            summary.extraction_data,
+            summary.parent_summary_text,
             summary.model_provider,
             summary.model_id,
             summary.scenario_type,
@@ -61,18 +68,47 @@ class SummaryRepository(BaseRepository):
         ))
         return affected > 0
     
+    def _migrate_add_structured_fields(self):
+        """Добавить новые поля в существующую таблицу summaries"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(summaries)")
+                columns = [row[1] for row in cursor.fetchall()]
+                
+                # Добавляем новые колонки если их нет
+                if 'classification_data' not in columns:
+                    cursor.execute("ALTER TABLE summaries ADD COLUMN classification_data TEXT")
+                    print("✅ Добавлена колонка classification_data")
+                
+                if 'extraction_data' not in columns:
+                    cursor.execute("ALTER TABLE summaries ADD COLUMN extraction_data TEXT")
+                    print("✅ Добавлена колонка extraction_data")
+                    
+                if 'parent_summary_text' not in columns:
+                    cursor.execute("ALTER TABLE summaries ADD COLUMN parent_summary_text TEXT")
+                    print("✅ Добавлена колонка parent_summary_text")
+                    
+                conn.commit()
+            
+        except Exception as e:
+            print(f"⚠️ Ошибка миграции: {e}")
+            # Не прерываем выполнение, если миграция не удалась
+    
     def get_summary(self, vk_chat_id: str, date: str, summary_type: SummaryType = SummaryType.DAILY) -> Optional[Summary]:
         """Получить суммаризацию"""
         query = """
             SELECT id, vk_chat_id, date, summary_text, summary_type,
                    reflection_text, improved_summary_text, provider_name,
                    provider_version, processing_time, created_at, updated_at,
-                   model_provider, model_id, scenario_type, generation_time_seconds
+                   model_provider, model_id, scenario_type, generation_time_seconds,
+                   classification_data, extraction_data, parent_summary_text
             FROM summaries
             WHERE vk_chat_id = ? AND date = ? AND summary_type = ?
         """
         # Handle both enum and string types for summary_type
         summary_type_value = summary_type.value if hasattr(summary_type, 'value') else str(summary_type)
+        
         results = self.execute_query(query, (vk_chat_id, date, summary_type_value))
         if results:
             row = results[0]
@@ -92,7 +128,10 @@ class SummaryRepository(BaseRepository):
                 model_provider=row['model_provider'],
                 model_id=row['model_id'],
                 scenario_type=row['scenario_type'],
-                generation_time_seconds=row['generation_time_seconds']
+                generation_time_seconds=row['generation_time_seconds'],
+                classification_data=row['classification_data'],
+                extraction_data=row['extraction_data'],
+                parent_summary_text=row['parent_summary_text']
             )
         return None
     

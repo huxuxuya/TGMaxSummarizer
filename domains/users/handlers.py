@@ -259,4 +259,41 @@ class UserHandlers:
             await query.edit_message_text(
                 format_error_message(e)
             )
+    
+    async def toggle_logging_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Включить/выключить логирование сообщений"""
+        query = update.callback_query
+        await query.answer()
+        
+        user = update.effective_user
+        
+        # Проверяем права администратора
+        if not self.user_service.is_admin(user.id):
+            await query.edit_message_text("❌ Только администраторы могут управлять логированием")
+            return
+        
+        try:
+            # Получаем текущий статус
+            from core.app_context import get_app_context
+            ctx = get_app_context()
+            config = ctx.config['bot']
+            
+            current_status = config.enable_message_logging
+            
+            # Переключаем
+            config.enable_message_logging = not current_status
+            
+            # TODO: Сохранить в конфиг файл (если нужно)
+            
+            status_text = "✅ включено" if config.enable_message_logging else "❌ отключено"
+            
+            await query.edit_message_text(
+                f"Логирование сообщений {status_text}\n\n"
+                f"📥 Входящие: {'✅' if config.message_log_incoming else '❌'}\n"
+                f"📤 Исходящие: {'✅' if config.message_log_outgoing else '❌'}"
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в toggle_logging_handler: {e}")
+            await query.edit_message_text(f"❌ Ошибка: {e}")
 

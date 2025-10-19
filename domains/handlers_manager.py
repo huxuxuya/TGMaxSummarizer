@@ -161,6 +161,21 @@ class HandlersManager:
                              self.summary_handlers.select_scenario_handler)
         self.registry.register("scenario_*", 
                              self.summary_handlers.select_scenario_handler)
+        # Новые обработчики для композиционной архитектуры
+        self.registry.register("preset_*", 
+                             self.summary_handlers.preset_selection_handler)
+        self.registry.register("custom_pipeline_*", 
+                             self.summary_handlers.custom_pipeline_handler)
+        self.registry.register("toggle_step_*", 
+                             self.summary_handlers.toggle_step_handler)
+        self.registry.register("run_custom_*", 
+                             self.summary_handlers.run_custom_handler)
+        self.registry.register("save_custom_preset_*", 
+                             self.summary_handlers.save_custom_preset_handler)
+        
+        # Admin commands
+        self.registry.register("toggle_logging", 
+                             self.user_handlers.toggle_logging_handler)
         self.registry.register("run_summary_*", 
                              self.summary_handlers.run_summary_handler)
         self.registry.register("create_for_date_*", 
@@ -227,10 +242,18 @@ class HandlersManager:
     
     async def start_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Главный обработчик /start"""
+        # Логируем входящее сообщение
+        from infrastructure.logging.message_logger import TelegramMessageLogger
+        TelegramMessageLogger.log_incoming_message(update, handler='start')
+        
         await self.user_handlers.start_handler(update, context)
     
     async def callback_query_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик callback запросов"""
+        # Логируем входящий callback
+        from infrastructure.logging.message_logger import TelegramMessageLogger
+        TelegramMessageLogger.log_incoming_message(update, handler='callback_query')
+        
         query = update.callback_query
         data = query.data
         
@@ -245,6 +268,10 @@ class HandlersManager:
     
     async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик текстовых сообщений"""
+        # Логируем входящее сообщение
+        from infrastructure.logging.message_logger import TelegramMessageLogger
+        TelegramMessageLogger.log_incoming_message(update, handler='message')
+        
         message = update.effective_message
         chat = update.effective_chat
         
@@ -262,12 +289,20 @@ class HandlersManager:
                     "Используйте кнопки для навигации по боту."
                 )
             else:
-                await message.reply_text(
-                    "Я понимаю только команды. Используйте /start для начала работы."
-                )
+                # Проверяем, ожидается ли ввод названия пресета
+                if context.user_data.get('waiting_for_preset_name'):
+                    await self.summary_handlers.handle_preset_name_input(update, context)
+                else:
+                    await message.reply_text(
+                        "Я понимаю только команды. Используйте /start для начала работы."
+                    )
     
     async def photo_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик фотографий"""
+        # Логируем входящее фото
+        from infrastructure.logging.message_logger import TelegramMessageLogger
+        TelegramMessageLogger.log_incoming_message(update, handler='photo')
+        
         message = update.effective_message
         
         # Проверяем, загружается ли расписание
@@ -320,6 +355,10 @@ class HandlersManager:
     
     async def schedule_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /schedule"""
+        # Логируем входящее сообщение
+        from infrastructure.logging.message_logger import TelegramMessageLogger
+        TelegramMessageLogger.log_incoming_message(update, handler='schedule')
+        
         try:
             chat = update.effective_chat
             
@@ -383,6 +422,10 @@ class HandlersManager:
     
     async def menu_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /menu"""
+        # Логируем входящее сообщение
+        from infrastructure.logging.message_logger import TelegramMessageLogger
+        TelegramMessageLogger.log_incoming_message(update, handler='menu')
+        
         try:
             chat = update.effective_chat
             
@@ -425,6 +468,10 @@ class HandlersManager:
     
     async def help_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /help"""
+        # Логируем входящее сообщение
+        from infrastructure.logging.message_logger import TelegramMessageLogger
+        TelegramMessageLogger.log_incoming_message(update, handler='help')
+        
         try:
             chat = update.effective_chat
             
@@ -1040,6 +1087,9 @@ class HandlersManager:
             date = parts[-1]
             vk_chat_id = '_'.join(parts[2:-1])
             
+            logger.info(f"🔍 _handle_publish_html: vk_chat_id={vk_chat_id}, date={date}")
+            logger.info(f"🔍 _handle_publish_html: selected_group_id={context.user_data.get('selected_group_id')}")
+            
             context.user_data['selected_date'] = date
             context.user_data['selected_chat_id'] = vk_chat_id
             context.user_data['use_html_format'] = True  # HTML format
@@ -1048,7 +1098,7 @@ class HandlersManager:
             await self.summary_handlers.publish_to_group_handler(update, context)
             
         except Exception as e:
-            logger.error(f"Ошибка в _handle_publish_html: {e}")
+            logger.error(f"Ошибка в _handle_publish_html: {e}", exc_info=True)
             await query.edit_message_text(
                 "❌ Произошла ошибка при публикации"
             )

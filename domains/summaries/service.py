@@ -1,4 +1,5 @@
 from typing import List, Dict, Any, Optional
+import json
 from .models import Summary, SummaryType, SummaryResult, SummaryInfo
 from .repository import SummaryRepository
 from core.database.connection import DatabaseConnection
@@ -10,6 +11,7 @@ class SummaryService:
     def __init__(self, db_connection: DatabaseConnection):
         self.summary_repo = SummaryRepository(db_connection)
         self.summary_repo.create_table()
+        self.summary_repo._migrate_add_structured_fields()
     
     def save_summary(self, summary: Summary) -> bool:
         """Сохранить суммаризацию"""
@@ -48,4 +50,78 @@ class SummaryService:
             provider_name=provider_name
         )
         return self.save_summary(summary)
+    
+    def extract_step_results_from_analysis(
+        self, 
+        result, 
+        scenario_type: str
+    ) -> Dict[str, Optional[str]]:
+        """
+        Извлечь структурированные данные из результата анализа
+        
+        Args:
+            result: AnalysisResult с метаданными
+            scenario_type: Тип сценария (fast, reflection, cleaning, structured)
+            
+        Returns:
+            Dict с полями: summary, reflection, improved, 
+            classification, extraction, parent_summary
+        """
+        step_data = {
+            'summary': None,
+            'reflection': None,
+            'improved': None,
+            'classification': None,
+            'extraction': None,
+            'parent_summary': None
+        }
+        
+        # Проверяем наличие step_results в metadata
+        if not hasattr(result, 'metadata') or not result.metadata:
+            return step_data
+            
+        step_results = result.metadata.get('step_results', {})
+        if not step_results:
+            return step_data
+        
+        # Извлекаем данные для соответствующих шагов
+        if 'summarization' in step_results:
+            step_data['summary'] = step_results['summarization']
+            
+        if 'reflection' in step_results:
+            step_data['reflection'] = step_results['reflection']
+            
+        if 'improvement' in step_results:
+            step_data['improved'] = step_results['improvement']
+            
+        if 'classification' in step_results:
+            classification_data = step_results['classification']
+            if classification_data:
+                try:
+                    # Конвертируем в JSON если это не строка
+                    if isinstance(classification_data, (list, dict)):
+                        step_data['classification'] = json.dumps(classification_data, ensure_ascii=False)
+                    else:
+                        step_data['classification'] = str(classification_data)
+                except (TypeError, ValueError) as e:
+                    print(f"⚠️ Ошибка сериализации classification: {e}")
+                    step_data['classification'] = str(classification_data)
+                    
+        if 'extraction' in step_results:
+            extraction_data = step_results['extraction']
+            if extraction_data:
+                try:
+                    # Конвертируем в JSON если это не строка
+                    if isinstance(extraction_data, (list, dict)):
+                        step_data['extraction'] = json.dumps(extraction_data, ensure_ascii=False)
+                    else:
+                        step_data['extraction'] = str(extraction_data)
+                except (TypeError, ValueError) as e:
+                    print(f"⚠️ Ошибка сериализации extraction: {e}")
+                    step_data['extraction'] = str(extraction_data)
+                    
+        if 'parent_summary' in step_results:
+            step_data['parent_summary'] = step_results['parent_summary']
+        
+        return step_data
 

@@ -22,6 +22,7 @@ class UserPreferences(BaseModel):
     confirmed_provider: str = "openrouter"  # NEW
     selected_model_id: Optional[str] = None  # NEW
     default_scenario: str = "fast"  # NEW - modular for easy expansion
+    custom_steps: Optional[str] = None  # NEW - JSON string with custom pipeline steps
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     

@@ -158,9 +158,13 @@ class BaseAIProvider(ABC):
         for msg in messages:
             time_str = msg.get('time', '??:??')
             sender_id = msg.get('sender_id')
-            sender = get_sender_display_name(
+            
+            # Используем новую функцию с ID и временем, но для Виктории Романовны оставляем как есть
+            from shared.utils import get_sender_display_name_with_id
+            sender = get_sender_display_name_with_id(
                 sender_id,
-                msg.get('sender', 'Неизвестно')
+                msg.get('sender', 'Неизвестно'),
+                time_str
             )
             text = msg.get('text', '')
             
@@ -168,8 +172,8 @@ class BaseAIProvider(ABC):
             image_analysis = msg.get('image_analysis', [])
             
             if text.strip() or image_analysis:
-                # Формируем основной текст сообщения
-                line = f"[{time_str}] {sender}:"
+                # Формируем основной текст сообщения (время уже включено в sender)
+                line = f"{sender}:"
                 
                 # Добавляем текст сообщения
                 if text.strip():

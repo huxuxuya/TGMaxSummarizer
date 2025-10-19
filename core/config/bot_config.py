@@ -21,6 +21,14 @@ class BotConfig(BaseConfig):
     default_image_analysis_prompt: str = Field(default="Что изображено на этой картинке? Опиши подробно, что ты видишь.")
     image_analysis_max_concurrent: int = Field(default=5)
     
+    # Логирование сообщений
+    enable_message_logging: bool = Field(default=True)  # Включено по умолчанию
+    message_log_incoming: bool = Field(default=True)    # Логировать входящие
+    message_log_outgoing: bool = Field(default=True)    # Логировать исходящие
+    
+    # Настройки HTTP логирования
+    disable_http_logs: bool = Field(default=True)       # Отключить HTTP логи по умолчанию
+    
     def __init__(self, **data):
         super().__init__(**data)
         self.telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "your_bot_token")
@@ -35,6 +43,14 @@ class BotConfig(BaseConfig):
         self.default_image_analysis_model = os.getenv("DEFAULT_IMAGE_ANALYSIS_MODEL", "gemma3:27b")
         self.default_image_analysis_prompt = os.getenv("DEFAULT_IMAGE_ANALYSIS_PROMPT", "Что изображено на этой картинке? Опиши подробно, что ты видишь.")
         self.image_analysis_max_concurrent = int(os.getenv("IMAGE_ANALYSIS_MAX_CONCURRENT", "5"))
+        
+        # Логирование сообщений
+        self.enable_message_logging = os.getenv("ENABLE_MESSAGE_LOGGING", "true").lower() == "true"
+        self.message_log_incoming = os.getenv("MESSAGE_LOG_INCOMING", "true").lower() == "true"
+        self.message_log_outgoing = os.getenv("MESSAGE_LOG_OUTGOING", "true").lower() == "true"
+        
+        # Настройки HTTP логирования
+        self.disable_http_logs = os.getenv("DISABLE_HTTP_LOGS", "true").lower() == "true"
         
         self.special_users = {
             44502596: "Виктория Романовна(учитель)"

@@ -144,6 +144,40 @@ def get_sender_display_name(sender_id: int, sender_name: str = None) -> str:
     
     return f"User {sender_id}" if sender_id else "Unknown"
 
+def get_sender_display_name_with_id(sender_id: int, sender_name: str = None, time_str: str = None) -> str:
+    """
+    Получить отображаемое имя отправителя с ID и временем, 
+    но для Виктории Романовны оставить как есть
+    
+    Args:
+        sender_id: ID отправителя
+        sender_name: Имя отправителя по умолчанию
+        time_str: Время сообщения
+        
+    Returns:
+        Отформатированное имя для отображения с ID и временем
+    """
+    from core.app_context import get_app_context
+    ctx = get_app_context()
+    SPECIAL_USERS = ctx.config['bot'].special_users
+    
+    # Для Виктории Романовны оставляем как есть (без ID и времени)
+    if sender_id in SPECIAL_USERS:
+        return SPECIAL_USERS[sender_id]
+    
+    # Для остальных пользователей добавляем ID и время
+    # Если sender_name это 'Неизвестно' или None, используем User + ID
+    if sender_name and sender_name != 'Неизвестно':
+        display_name = f"{sender_name} (ID:{sender_id})"
+    else:
+        display_name = f"User {sender_id}"
+    
+    # Добавляем время если оно есть и не равно '??:??'
+    if time_str and time_str != '??:??':
+        return f"[{time_str}] {display_name}"
+    else:
+        return display_name
+
 def format_summary_for_telegram(summary: str, date: str = None, chat_name: str = None) -> List[str]:
     """Форматировать суммаризацию для отправки в Telegram используя telegramify-markdown"""
     from infrastructure.telegram.sender import TelegramMessageSender
@@ -253,6 +287,7 @@ def format_summary_for_telegram_html_universal(summary: str, date: str = None, c
     """Форматировать суммаризацию для отправки в Telegram с универсальным HTML преобразованием"""
     from infrastructure.telegram.formatter import TelegramFormatter
     
+    
     # Используем универсальное преобразование Markdown в HTML
     formatted_summary = TelegramFormatter.markdown_to_html_universal(summary, telegram_safe=True)
     
@@ -270,25 +305,25 @@ def format_summary_for_telegram_html_universal(summary: str, date: str = None, c
             
             # Формируем компактный заголовок с HTML разметкой
             if chat_name:
-                escaped_chat_name = TelegramFormatter.escape_html(chat_name)
-                escaped_date = TelegramFormatter.escape_html(formatted_date)
-                escaped_weekday = TelegramFormatter.escape_html(weekday)
+                escaped_chat_name = TelegramFormatter.escape_html_content(chat_name)
+                escaped_date = TelegramFormatter.escape_html_content(formatted_date)
+                escaped_weekday = TelegramFormatter.escape_html_content(weekday)
                 header = f"📱 <b>{escaped_chat_name}</b> • {escaped_date}, {escaped_weekday}\n\n"
             else:
-                escaped_date = TelegramFormatter.escape_html(formatted_date)
-                escaped_weekday = TelegramFormatter.escape_html(weekday)
+                escaped_date = TelegramFormatter.escape_html_content(formatted_date)
+                escaped_weekday = TelegramFormatter.escape_html_content(weekday)
                 header = f"📋 <b>Информация от {escaped_date}, {escaped_weekday}</b>\n\n"
         except:
             if chat_name:
-                escaped_chat_name = TelegramFormatter.escape_html(chat_name)
-                escaped_date = TelegramFormatter.escape_html(date)
+                escaped_chat_name = TelegramFormatter.escape_html_content(chat_name)
+                escaped_date = TelegramFormatter.escape_html_content(date)
                 header = f"📱 <b>{escaped_chat_name}</b> • {escaped_date}\n\n"
             else:
-                escaped_date = TelegramFormatter.escape_html(date)
+                escaped_date = TelegramFormatter.escape_html_content(date)
                 header = f"📋 <b>Информация от {escaped_date}</b>\n\n"
     else:
         if chat_name:
-            escaped_chat_name = TelegramFormatter.escape_html(chat_name)
+            escaped_chat_name = TelegramFormatter.escape_html_content(chat_name)
             header = f"📱 <b>{escaped_chat_name}</b>\n\n"
         else:
             header = "📋 <b>Информация для ознакомления</b>\n\n"

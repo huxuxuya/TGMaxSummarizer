@@ -54,9 +54,7 @@ class OllamaProvider(BaseAIProvider):
             # Форматируем для анализа
             formatted_text = self.format_messages_for_analysis(optimized_messages)
             
-            # Логируем форматированные сообщения (ПОСЛЕ оптимизации)
-            if self.llm_logger:
-                self.llm_logger.log_formatted_messages(formatted_text, len(optimized_messages))
+            # Логирование форматированных сообщений теперь выполняется в StepExecutor
             
             self.logger.info(f"📊 Статистика для Ollama:")
             self.logger.info(f"   Всего сообщений: {len(messages)}")
@@ -72,10 +70,7 @@ class OllamaProvider(BaseAIProvider):
             end_time = time.time()
             response_time = end_time - start_time
             
-            # Логируем ответ если логгер установлен
-            if self.llm_logger and summary:
-                self.llm_logger.log_llm_response(summary, "summarization", response_time)
-                self.llm_logger.log_stage_time('summarization', response_time)
+            # Логирование ответа теперь выполняется в StepExecutor
             
             if summary:
                 self.logger.info("✅ Суммаризация получена от Ollama")
@@ -155,11 +150,7 @@ class OllamaProvider(BaseAIProvider):
             self.logger.debug(f"Prompt preview: {prompt[:200]}...")
             self.logger.debug(f"=== END INPUT ===")
             
-            # Логируем запрос если логгер установлен
-            if self.llm_logger:
-                # Определяем тип запроса по содержимому промпта
-                request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
-                self.llm_logger.log_llm_request(prompt, request_type)
+            # Логирование теперь выполняется в StepExecutor
             
             response = await self._call_ollama_api(prompt, is_generation=True, stream_callback=stream_callback)
             
@@ -173,17 +164,7 @@ class OllamaProvider(BaseAIProvider):
                 self.logger.debug(f"Response preview: {response[:200]}...")
                 self.logger.debug(f"=== END OUTPUT ===")
                 
-                # Логируем ответ если логгер установлен
-                if self.llm_logger:
-                    # Определяем тип ответа по содержимому промпта
-                    request_type = "reflection" if "рефлексия" in prompt.lower() or "анализ" in prompt.lower() else "improvement"
-                    self.llm_logger.log_llm_response(response, request_type, response_time)
-                    
-                    # Записываем время выполнения этапа
-                    if request_type == "reflection":
-                        self.llm_logger.log_stage_time('reflection', response_time)
-                    elif request_type == "improvement":
-                        self.llm_logger.log_stage_time('improvement', response_time)
+                # Логирование ответа теперь выполняется в StepExecutor
                 
                 return response
             else:
@@ -262,9 +243,7 @@ class OllamaProvider(BaseAIProvider):
                 from shared.prompts import PromptTemplates
                 prompt = PromptTemplates.get_summarization_prompt(text, 'ollama')
                 
-                # Логируем ПОЛНЫЙ промпт (с системным сообщением)
-                if self.llm_logger:
-                    self.llm_logger.log_llm_request(prompt, "summarization")
+                # Логирование промпта теперь выполняется в StepExecutor
 
             self.logger.info(f"🔗 Отправляем запрос в Ollama")
             self.logger.info(f"🔗 DEBUG: URL для запроса: {self.base_url}/api/generate")

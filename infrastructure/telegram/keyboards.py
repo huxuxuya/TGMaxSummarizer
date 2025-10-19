@@ -632,18 +632,93 @@ def publish_format_keyboard(vk_chat_id: str, date: str):
     return InlineKeyboardMarkup(keyboard)
 
 def scenario_selection_keyboard(vk_chat_id: str, date: str):
-    """Клавиатура выбора сценария суммаризации"""
+    """Клавиатура выбора сценария суммаризации с новыми пресетами"""
     keyboard = [
+        # Готовые пресеты
         [InlineKeyboardButton("⚡ Быстрая суммаризация", 
-            callback_data=f"scenario_fast_{vk_chat_id}_{date}")],
+            callback_data=f"preset_fast_{vk_chat_id}_{date}")],
         [InlineKeyboardButton("🔄 С рефлексией", 
-            callback_data=f"scenario_reflection_{vk_chat_id}_{date}")],
+            callback_data=f"preset_reflection_{vk_chat_id}_{date}")],
         [InlineKeyboardButton("🧹 С очисткой данных", 
-            callback_data=f"scenario_cleaning_{vk_chat_id}_{date}")],
+            callback_data=f"preset_cleaning_{vk_chat_id}_{date}")],
         [InlineKeyboardButton("🔍 Структурированный анализ", 
-            callback_data=f"scenario_structured_{vk_chat_id}_{date}")],
+            callback_data=f"preset_structured_{vk_chat_id}_{date}")],
+        [InlineKeyboardButton("📅 С анализом расписания", 
+            callback_data=f"preset_with_schedule_{vk_chat_id}_{date}")],
+        [InlineKeyboardButton("🎯 Полный анализ", 
+            callback_data=f"preset_full_{vk_chat_id}_{date}")],
+        
+        # Разделитель
+        [InlineKeyboardButton("🎨 Конструктор (продвинутый)", 
+            callback_data=f"custom_pipeline_{vk_chat_id}_{date}")],
+        
+        # Назад
         [InlineKeyboardButton("🔙 Назад", callback_data=f"quick_create_{vk_chat_id}")]
     ]
+    return InlineKeyboardMarkup(keyboard)
+
+def custom_pipeline_keyboard(vk_chat_id: str, date: str, selected_steps: list):
+    """Клавиатура конструктора пользовательского pipeline"""
+    from domains.ai.models import StepType
+    
+    keyboard = []
+    
+    # Шаг 1: Очистка (опциональный)
+    is_cleaning = StepType.CLEANING in selected_steps
+    keyboard.append([InlineKeyboardButton(
+        f"{'✅' if is_cleaning else '⬜'} 1. Очистка данных",
+        callback_data=f"toggle_step_cleaning_{vk_chat_id}_{date}"
+    )])
+    
+    # Шаг 2: Суммаризация (обязательный, всегда включен)
+    keyboard.append([InlineKeyboardButton(
+        "✅ 2. Суммаризация (обязательный)",
+        callback_data="noop"  # Не кликабельно
+    )])
+    
+    # Шаг 3: Рефлексия (опциональный)
+    is_reflection = StepType.REFLECTION in selected_steps
+    keyboard.append([InlineKeyboardButton(
+        f"{'✅' if is_reflection else '⬜'} 3. Рефлексия",
+        callback_data=f"toggle_step_reflection_{vk_chat_id}_{date}"
+    )])
+    
+    # Шаг 4: Улучшение (зависит от рефлексии)
+    is_improvement = StepType.IMPROVEMENT in selected_steps
+    can_improve = is_reflection
+    keyboard.append([InlineKeyboardButton(
+        f"{'✅' if is_improvement else '⬜'} 4. Улучшение {'(требует рефлексию)' if not can_improve else ''}",
+        callback_data=f"toggle_step_improvement_{vk_chat_id}_{date}" if can_improve else "noop"
+    )])
+    
+    # Шаг 5: Анализ расписания (НОВОЕ)
+    is_schedule = StepType.SCHEDULE_ANALYSIS in selected_steps
+    keyboard.append([InlineKeyboardButton(
+        f"{'✅' if is_schedule else '⬜'} 5. Анализ расписания",
+        callback_data=f"toggle_step_schedule_analysis_{vk_chat_id}_{date}"
+    )])
+    
+    # Шаг 6: Структурный анализ (опциональный)
+    is_structured = StepType.CLASSIFICATION in selected_steps
+    keyboard.append([InlineKeyboardButton(
+        f"{'✅' if is_structured else '⬜'} 6. Структурный анализ",
+        callback_data=f"toggle_step_structured_{vk_chat_id}_{date}"
+    )])
+    
+    # Оценка времени
+    estimated_time = len(selected_steps) * 30  # секунд на шаг
+    keyboard.append([InlineKeyboardButton(
+        f"📊 Предпросмотр: {len(selected_steps)} шагов, ~{estimated_time}с",
+        callback_data="noop"
+    )])
+    
+    # Действия
+    keyboard.extend([
+        [InlineKeyboardButton("💾 Сохранить как пресет", callback_data=f"save_custom_preset_{vk_chat_id}_{date}")],
+        [InlineKeyboardButton("🚀 Запустить анализ", callback_data=f"run_custom_{vk_chat_id}_{date}")],
+        [InlineKeyboardButton("🔙 Назад", callback_data=f"select_scenario_{vk_chat_id}_{date}")]
+    ])
+    
     return InlineKeyboardMarkup(keyboard)
 
 def model_selection_for_summary_keyboard(vk_chat_id: str, date: str, scenario: str):
@@ -693,4 +768,13 @@ def summary_view_keyboard(vk_chat_id: str, date: str, show_recreate: bool = True
         [InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")]
     ])
     
+    return InlineKeyboardMarkup(keyboard)
+
+def admin_settings_keyboard():
+    """Клавиатура настроек администратора"""
+    keyboard = [
+        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton("📝 Логирование", callback_data="toggle_logging")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_menu")]
+    ]
     return InlineKeyboardMarkup(keyboard)

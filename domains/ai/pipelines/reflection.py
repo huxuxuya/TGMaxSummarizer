@@ -67,7 +67,7 @@ class ReflectionPipeline(BasePipeline):
         
         self.logger.info("✨ Начинаем улучшение суммаризации")
         
-        improvement_prompt = self._create_improvement_prompt(original_summary, reflection)
+        improvement_prompt = self._create_improvement_prompt(original_summary, reflection, context)
         improved_summary = await provider.generate_response(improvement_prompt)
         
         if not improved_summary:
@@ -122,9 +122,23 @@ class ReflectionPipeline(BasePipeline):
 
 Дай конструктивную критику и предложения по улучшению."""
     
-    def _create_improvement_prompt(self, original_summary: str, reflection: str) -> str:
+    def _create_improvement_prompt(self, original_summary: str, reflection: str, context: PipelineContext) -> str:
         """Создать промпт для улучшения"""
-        return f"""На основе исходной суммаризации и анализа, создай улучшенную версию:
+        messages = context.request.messages
+        total_messages = len(messages)
+        max_messages = min(20, total_messages)  # Показываем до 20 сообщений для контекста
+        
+        # Форматируем сообщения для контекста
+        formatted_messages = ""
+        for i, msg in enumerate(messages[:max_messages]):
+            text = msg.get('text', '').strip()
+            if text:
+                formatted_messages += f"{i+1}. {text}\n"
+        
+        if total_messages > max_messages:
+            formatted_messages += f"\n... и еще {total_messages - max_messages} сообщений\n"
+        
+        return f"""На основе исходной суммаризации, анализа и исходных сообщений чата, создай улучшенную версию.
 
 ИСХОДНАЯ СУММАРИЗАЦИЯ:
 {original_summary}
@@ -132,13 +146,21 @@ class ReflectionPipeline(BasePipeline):
 АНАЛИЗ И КРИТИКА:
 {reflection}
 
-Создай улучшенную суммаризацию, которая:
+ИСХОДНЫЕ СООБЩЕНИЯ ЧАТА (для справки):
+{formatted_messages}
+
+КОНТЕКСТ:
+- Всего сообщений: {total_messages}
+- Показано для контекста: {max_messages}
+
+Задача: Создай улучшенную суммаризацию, которая:
 1. Учитывает замечания из анализа
 2. Более структурирована и логична
-3. Содержит все важные детали
+3. Содержит все важные детали из исходных сообщений
 4. Легко читается и понимается
+5. Исправляет пропущенные моменты, указанные в анализе
 
-УЛУЧШЕННАЯ СУММАРИЗАЦИЯ:"""
+ВАЖНО: Верни ТОЛЬКО улучшенную суммаризацию без пояснений, анализа или комментариев. Начни сразу с содержания улучшенной суммаризации."""
     
     async def _build_final_result(self, context: PipelineContext, processing_time: float) -> AnalysisResult:
         """Построить финальный результат"""

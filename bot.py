@@ -16,6 +16,13 @@ def setup_logging(config):
         level=getattr(logging, config['bot'].log_level),
         datefmt="%H:%M:%S"
     )
+    
+    # Отключаем логи HTTP запросов к Telegram API (если включено в конфиге)
+    if config['bot'].disable_http_logs:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
+        logging.getLogger("telegram").setLevel(logging.WARNING)
+        logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 
 class VKMaxTelegramBot:
     """Основной класс Telegram бота с новой архитектурой"""

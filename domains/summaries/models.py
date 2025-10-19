@@ -31,6 +31,11 @@ class Summary(BaseModel):
     scenario_type: Optional[str] = None  # fast, reflection, cleaning, structured
     generation_time_seconds: Optional[float] = None  # Время генерации
     
+    # ПОЛЯ для структурированного анализа:
+    classification_data: Optional[str] = None  # JSON с результатами классификации
+    extraction_data: Optional[str] = None  # JSON с результатами экстракции
+    parent_summary_text: Optional[str] = None  # Сводка для родителей
+    
     class Config:
         from_attributes = True
         # Disable protected namespace warnings for model_* fields
