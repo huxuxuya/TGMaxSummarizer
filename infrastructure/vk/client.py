@@ -8,7 +8,7 @@ from python_max_client.functions.chats import get_chats, get_chat_messages
 from python_max_client.functions.users import resolve_users
 
 from .models import VKChat, VKMessage, VKUser
-from shared.utils import get_sender_display_name
+from shared.utils import get_sender_display_name_with_id
 
 logger = logging.getLogger(__name__)
 
@@ -163,8 +163,13 @@ class VKMaxClient:
                     
                     for msg in new_messages:
                         sender_id = msg.get('sender')
+                        # Сохраняем только чистое имя пользователя (БЕЗ ID в скобках)
                         default_name = user_names.get(sender_id) if sender_id else None
-                        msg['sender_name'] = get_sender_display_name(sender_id, default_name)
+                        if default_name:
+                            msg['sender_name'] = default_name
+                        else:
+                            # Если имя не найдено, используем fallback без функции форматирования
+                            msg['sender_name'] = None
                         
                     all_messages.extend(new_messages)
                     logger.info(f"📥 Пакет {batch_count}: загружено {len(new_messages)} новых сообщений")
@@ -269,7 +274,8 @@ class VKMaxClient:
             else:
                 date_str = datetime.now().strftime("%Y-%m-%d")
             
-            sender_name = get_sender_display_name(sender_id, None)
+            # Имя пользователя уже обработано в load_chat_messages, используем как есть
+            sender_name = msg.sender_name
             
             # Обрабатываем изображения
             image_paths = []

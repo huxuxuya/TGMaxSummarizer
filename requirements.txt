@@ -17,3 +17,5 @@ aiofiles==23.2.1
 
 # Utilities
 # asyncio, logging, datetime, pathlib, typing, enum, json, re, os - встроены в Python
+\n+# Networking
+websockets>=12,<14

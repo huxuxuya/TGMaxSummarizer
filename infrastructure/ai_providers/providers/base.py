@@ -7,7 +7,7 @@ import logging
 import asyncio
 from datetime import datetime
 
-from shared.utils import get_sender_display_name
+from shared.utils import get_sender_display_name_with_id
 
 logger = logging.getLogger(__name__)
 
@@ -158,12 +158,13 @@ class BaseAIProvider(ABC):
         for msg in messages:
             time_str = msg.get('time', '??:??')
             sender_id = msg.get('sender_id')
+            sender_name = msg.get('sender_name')  # ← ИСПРАВЛЕНО: берем из правильной колонки БД
             
-            # Используем новую функцию с ID и временем, но для Виктории Романовны оставляем как есть
+            # Добавляем ID в скобках динамически
             from shared.utils import get_sender_display_name_with_id
             sender = get_sender_display_name_with_id(
                 sender_id,
-                msg.get('sender', 'Неизвестно'),
+                sender_name,  # ← Передаем реальное имя из БД
                 time_str
             )
             text = msg.get('text', '')
@@ -225,9 +226,10 @@ class BaseAIProvider(ABC):
             optimized_text = re.sub(r'\s+', ' ', text) if text else ''
             
             sender_id = msg.get('sender_id')
-            sender_name = get_sender_display_name(
+            sender_name = get_sender_display_name_with_id(
                 sender_id,
-                msg.get('sender_name', 'Неизвестно')
+                msg.get('sender_name', 'Неизвестно'),
+                None
             )
             time = msg.get('message_time', 0)
             

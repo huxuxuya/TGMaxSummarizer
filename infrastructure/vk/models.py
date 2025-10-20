@@ -15,6 +15,7 @@ class VKMessage(BaseModel):
     id: Optional[str] = None
     message_id: Optional[str] = None
     sender: Optional[int] = None
+    sender_name: Optional[str] = None
     text: str = ""
     time: Optional[int] = None
     attachments: List[Dict[str, Any]] = Field(default_factory=list)

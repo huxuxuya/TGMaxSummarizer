@@ -166,11 +166,12 @@ def get_sender_display_name_with_id(sender_id: int, sender_name: str = None, tim
         return SPECIAL_USERS[sender_id]
     
     # Для остальных пользователей добавляем ID и время
-    # Если sender_name это 'Неизвестно' или None, используем User + ID
+    # Всегда показываем имя пользователя с ID в скобках
     if sender_name and sender_name != 'Неизвестно':
         display_name = f"{sender_name} (ID:{sender_id})"
     else:
-        display_name = f"User {sender_id}"
+        # Если имя неизвестно, используем "Пользователь" вместо "User"
+        display_name = f"Пользователь (ID:{sender_id})"
     
     # Добавляем время если оно есть и не равно '??:??'
     if time_str and time_str != '??:??':
