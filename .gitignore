@@ -98,4 +98,14 @@ IMG_*.png
 IMG_*.PNG
 
 # Скачанные изображения из VK MAX
-images/message_logs/
+images/
+images/**
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.bmp
+*.tiff
+*.svg
+IMG_*
