@@ -2,6 +2,7 @@
 .env
 *.env
 .env*
+.env.backup
 login_token.txt
 *.token
 *.key
@@ -19,6 +20,11 @@ login_token.txt
 logs/
 llm_logs/
 telegram_messages/
+message_logs/
+llm_logs/**
+message_logs/**
+message_logs/incoming/**
+message_logs/outgoing/**
 
 # Python
 __pycache__/
@@ -65,16 +71,22 @@ venv.bak/
 .Trashes
 ehthumbs.db
 Thumbs.db
+**/.DS_Store
 
 # Временные файлы
 *.tmp
 *.temp
 temp/
 tmp/
+*_tmp_*
+message_exports_tmp_*
 
 # Cursor/AI артефакты
 .cursor/
 *.plan.md
+
+# Конфигурационные файлы
+.pylintrc
 
 # Тестовые данные
 test_data/
