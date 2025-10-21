@@ -612,14 +612,22 @@ def settings_menu_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def schedule_management_keyboard():
+def schedule_management_keyboard(has_schedule: bool = False, has_analysis: bool = False):
     """Клавиатура управления расписанием группы"""
-    keyboard = [
-        [InlineKeyboardButton("📅 Показать расписание", callback_data="show_schedule")],
-        [InlineKeyboardButton("📤 Установить расписание", callback_data="set_schedule")],
-        [InlineKeyboardButton("🗑️ Удалить расписание", callback_data="delete_schedule")],
-        [InlineKeyboardButton("🔙 К группе", callback_data="back_to_group_menu")]
-    ]
+    keyboard = []
+    
+    if has_schedule:
+        keyboard.append([InlineKeyboardButton("📅 Показать расписание", callback_data="show_schedule")])
+        
+        if has_analysis:
+            keyboard.append([InlineKeyboardButton("📝 Показать полный текст", callback_data="show_full_schedule_text")])
+        
+        keyboard.append([InlineKeyboardButton("📤 Обновить расписание", callback_data="set_schedule")])
+        keyboard.append([InlineKeyboardButton("🗑️ Удалить расписание", callback_data="delete_schedule")])
+    else:
+        keyboard.append([InlineKeyboardButton("📤 Установить расписание", callback_data="set_schedule")])
+    
+    keyboard.append([InlineKeyboardButton("🔙 К группе", callback_data="back_to_group_menu")])
     return InlineKeyboardMarkup(keyboard)
 
 def publish_format_keyboard(vk_chat_id: str, date: str):

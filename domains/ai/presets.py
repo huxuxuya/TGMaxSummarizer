@@ -75,3 +75,4 @@ class PresetRegistry:
     def get_preset_ids(cls) -> List[str]:
         """Получить список ID всех пресетов"""
         return list(cls.PRESETS.keys())
+

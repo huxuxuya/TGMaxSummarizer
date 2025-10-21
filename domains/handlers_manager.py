@@ -327,7 +327,7 @@ class HandlersManager:
             
             if success:
                 # Удаляем старые результаты анализа расписания
-                from .repository import ScheduleAnalysisRepository
+                from domains.chats.repository import ScheduleAnalysisRepository
                 schedule_analysis_repo = ScheduleAnalysisRepository(ctx.db_connection)
                 schedule_analysis_repo.delete_schedule_analysis(group_id)
                 
@@ -530,11 +530,29 @@ class HandlersManager:
                 return
             
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.schedule_management_keyboard()
             
             # Проверяем, есть ли уже расписание
             has_schedule = ctx.chat_service.get_schedule_photo(selected_group_id) is not None
-            status_text = "✅ Расписание установлено" if has_schedule else "❌ Расписание не установлено"
+            
+            # Проверяем, есть ли анализ расписания
+            from domains.chats.repository import ScheduleAnalysisRepository
+            schedule_analysis_repo = ScheduleAnalysisRepository(ctx.db_connection)
+            schedule_analysis = schedule_analysis_repo.get_schedule_analysis(selected_group_id)
+            
+            keyboard = keyboards.schedule_management_keyboard(has_schedule, bool(schedule_analysis))
+            
+            # Формируем статус
+            if has_schedule and schedule_analysis:
+                status_text = "✅ Расписание установлено и распознано"
+                analysis_text = schedule_analysis.get('analysis_text', '')
+                if analysis_text:
+                    # Обрезаем текст для отображения (первые 200 символов)
+                    preview_text = analysis_text[:200] + "..." if len(analysis_text) > 200 else analysis_text
+                    status_text += f"\n\n📝 *Распознанный текст:*\n{preview_text}"
+            elif has_schedule:
+                status_text = "⚠️ Расписание установлено, но не распознано"
+            else:
+                status_text = "❌ Расписание не установлено"
             
             from infrastructure.telegram.formatter import TelegramFormatter
             await query.edit_message_text(

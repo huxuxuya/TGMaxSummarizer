@@ -3,11 +3,13 @@
 """
 import time
 import logging
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Optional
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from ..models import StepType, AnalysisResult, AnalysisType
 from ..service import PipelineContext
+from infrastructure.logging.log_session import LogSession
 
 class StepExecutor:
     """Исполнитель шагов для композиционного анализа с централизованным логированием"""
@@ -27,6 +29,62 @@ class StepExecutor:
     def __init__(self, context: PipelineContext):
         self.context = context
         self.logger = logging.getLogger(__name__)
+        
+        # Инициализируем LogSession если не установлен
+        if not self.context.log_session and self.context.request.llm_logger:
+            self._init_log_session()
+    
+    def _init_log_session(self):
+        """Инициализировать LogSession для централизованного логирования"""
+        if not self.context.request.llm_logger:
+            return
+        
+        # Получаем базовый путь из llm_logger
+        logs_path = self.context.request.llm_logger.get_logs_path()
+        if not logs_path or logs_path == 'None' or logs_path == 'None':
+            # Если папка еще не создана, создаем временную
+            from datetime import datetime
+            temp_dir = Path("temp_logs") / f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            base_path = temp_dir
+            self.logger.warning(f"⚠️ LLM logger папка не создана, используем временную: {base_path}")
+        else:
+            base_path = Path(logs_path)
+        
+        # Метаданные запуска
+        run_meta = {
+            "scenario": getattr(self.context.request, 'scenario', 'unknown'),
+            "provider": self.context.request.provider_name,
+            "model": self.context.request.model_id,
+            "chat_id": getattr(self.context.request, 'chat_id', None),
+            "user_id": getattr(self.context.request, 'user_id', None),
+            "analysis_type": self.context.request.analysis_type.value if self.context.request.analysis_type else 'unknown'
+        }
+        
+        self.context.log_session = LogSession(base_path, run_meta)
+        self.logger.info(f"📋 LogSession инициализирован: {base_path}")
+    
+    def _get_input_for_step(self, preferred_steps: List[str] = None) -> Any:
+        """
+        Получить входные данные для текущего шага
+        
+        Args:
+            preferred_steps: Список предпочитаемых шагов в порядке приоритета
+            
+        Returns:
+            Результат предыдущего шага или исходные сообщения
+        """
+        # Если указаны предпочитаемые шаги, ищем их результаты
+        if preferred_steps:
+            for step in preferred_steps:
+                result = self.context.step_results.get(step)
+                if result:
+                    self.logger.debug(f"📥 Используем результат шага '{step}' как входные данные")
+                    return result
+        
+        # Если ничего не нашли, используем исходные сообщения
+        self.logger.debug(f"📥 Используем исходные сообщения как входные данные")
+        return self.context.request.messages
     
     async def execute_steps(self, steps: List[StepType]) -> AnalysisResult:
         """Выполнить список шагов последовательно"""
@@ -333,21 +391,28 @@ class StepExecutor:
         
         return classification
     
-    def _create_classification_prompt(self, messages: list) -> str:
+    def _create_classification_prompt(self, input_data: Any) -> str:
         """Создать промпт для классификации"""
         import json
         
-        messages_json = json.dumps([
-            {"id": msg.get('message_id', msg.get('id', '')), "text": msg.get('text')} 
-            for msg in messages
-        ], ensure_ascii=False)
+        # Если входные данные - это список сообщений
+        if isinstance(input_data, list):
+            messages_json = json.dumps([
+                {"id": msg.get('message_id', msg.get('id', '')), "text": msg.get('text')} 
+                for msg in input_data
+            ], ensure_ascii=False)
+            
+            data_section = f"СООБЩЕНИЯ:\n{messages_json}"
         
-        return f"""Классифицируй следующие сообщения чата по типам:
+        # Если это текст (например, суммаризация)
+        else:
+            data_section = f"ТЕКСТ ДЛЯ КЛАССИФИКАЦИИ:\n{input_data}"
+        
+        return f"""Классифицируй следующие данные по типам:
 
-СООБЩЕНИЯ:
-{messages_json}
+{data_section}
 
-Классифицируй каждое сообщение по следующим категориям:
+Классифицируй каждое сообщение (или фрагмент текста) по следующим категориям:
 - "important": Важная информация для родителей
 - "coordination": Координация и планирование
 - "micromanagement": Микроменеджмент
@@ -359,6 +424,38 @@ class StepExecutor:
 
 Верни только JSON массив с объектами:
 [{{"message_id": "id", "class": "category"}}, ...]"""
+    
+    def _create_extraction_prompt(self, input_data: Any) -> str:
+        """Создать промпт для экстракции событий"""
+        import json
+        
+        # Если входные данные - это список сообщений
+        if isinstance(input_data, list):
+            messages_json = json.dumps([
+                {"id": msg.get('message_id', msg.get('id', '')), "text": msg.get('text')} 
+                for msg in input_data
+            ], ensure_ascii=False)
+            
+            data_section = f"СООБЩЕНИЯ:\n{messages_json}"
+        
+        # Если это текст (например, суммаризация)
+        else:
+            data_section = f"ТЕКСТ ДЛЯ ЭКСТРАКЦИИ:\n{input_data}"
+        
+        return f"""Извлеки важные события и информацию из следующих данных:
+
+{data_section}
+
+Извлеки следующие типы информации:
+- "events": Мероприятия и события
+- "important": Важная информация для родителей
+- "rules": Правила и требования
+- "problems": Проблемы и жалобы
+- "schedule": Информация о расписании
+- "announcements": Объявления
+
+Верни только JSON массив с объектами:
+[{{"type": "event_type", "message_id": "id", "description": "описание события"}}, ...]"""
     
     def _parse_classification_response(self, response: str) -> list:
         """Парсить ответ классификации"""
@@ -375,6 +472,23 @@ class StepExecutor:
             return classification
         except json.JSONDecodeError as e:
             self.logger.error(f"Ошибка парсинга JSON классификации: {e}")
+            return []
+    
+    def _parse_extraction_response(self, response: str) -> list:
+        """Парсить ответ экстракции"""
+        import json
+        import re
+        
+        try:
+            json_match = re.search(r'\[.*\]', response, re.DOTALL)
+            if not json_match:
+                self.logger.error(f"Не удалось найти JSON массив в ответе: {response}")
+                return []
+            
+            extraction = json.loads(json_match.group())
+            return extraction
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Ошибка парсинга JSON экстракции: {e}")
             return []
     
     async def _do_extraction(self) -> List[Dict]:
@@ -481,16 +595,25 @@ class StepExecutor:
         self.logger.info(f"✅ Сводка сгенерирована ({len(summary)} символов)")
         return summary
     
-    def _create_parent_summary_prompt(self, events: list) -> str:
+    def _create_parent_summary_prompt(self, input_data: Any) -> str:
         """Создать промпт для сводки родителей"""
-        events_text = ""
-        for event in events:
-            events_text += f"- {event.get('type', 'unknown')}: {event.get('description', '')}\n"
+        import json
         
-        return f"""Создай краткую сводку для родителей на основе извлеченных событий:
+        # Если входные данные - это список событий/объектов
+        if isinstance(input_data, list):
+            events_text = ""
+            for event in input_data:
+                events_text += f"- {event.get('type', 'unknown')}: {event.get('description', '')}\n"
+            
+            data_section = f"СОБЫТИЯ:\n{events_text}"
+        
+        # Если это текст (например, суммаризация)
+        else:
+            data_section = f"ДАННЫЕ ДЛЯ СВОДКИ:\n{input_data}"
+        
+        return f"""Создай краткую сводку для родителей на основе следующих данных:
 
-СОБЫТИЯ:
-{events_text}
+{data_section}
 
 Создай структурированную сводку, которая:
 1. Кратко описывает основные события дня
@@ -499,6 +622,92 @@ class StepExecutor:
 4. Легко читается и понимается
 
 СВОДКА ДЛЯ РОДИТЕЛЕЙ:"""
+    
+    async def _get_schedule_text_from_db(self) -> Optional[str]:
+        """Получить OCR текст расписания из базы данных"""
+        try:
+            # Получаем group_id из контекста запроса
+            group_id = self.context.request.chat_context.get('group_id')
+            if not group_id:
+                self.logger.warning("Group ID не найден в контексте запроса")
+                return None
+            
+            # Импортируем репозиторий для работы с расписанием
+            from domains.chats.repository import ScheduleAnalysisRepository
+            from core.database.connection import DatabaseConnection
+            
+            # Получаем соединение с БД из контекста приложения
+            from core.app_context import get_app_context
+            ctx = get_app_context()
+            
+            schedule_repo = ScheduleAnalysisRepository(ctx.db_connection)
+            schedule_analysis = schedule_repo.get_schedule_analysis(group_id)
+            
+            if schedule_analysis and schedule_analysis.get('analysis_text'):
+                self.logger.info(f"📅 Найдено расписание для группы {group_id}")
+                return schedule_analysis['analysis_text']
+            else:
+                self.logger.warning(f"📅 Расписание для группы {group_id} не найдено")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Ошибка получения расписания из БД: {e}")
+            return None
+    
+    def _create_schedule_analysis_prompt(self, input_data: Any, schedule_text: str) -> str:
+        """Создать промпт для анализа расписания"""
+        from datetime import datetime, timedelta
+        
+        tomorrow = datetime.now() + timedelta(days=1)
+        tomorrow_weekday = tomorrow.strftime("%A").lower()
+        
+        # Если входные данные - это список сообщений
+        if isinstance(input_data, list):
+            messages_text = ""
+            for msg in input_data:
+                text = msg.get('text', '').strip()
+                if text:
+                    messages_text += f"{text}\n"
+            
+            data_section = f"СООБЩЕНИЯ:\n{messages_text}"
+        
+        # Если это текст (например, суммаризация)
+        else:
+            data_section = f"СУММАРИЗАЦИЯ:\n{input_data}"
+        
+        return f"""Проанализируй следующие данные и добавь информацию о расписании на завтра ({tomorrow.strftime('%d.%m.%Y')} - {tomorrow_weekday}).
+
+{data_section}
+
+OCR ТЕКСТ РАСПИСАНИЯ:
+{schedule_text}
+
+Задача:
+1. Проанализируй OCR текст расписания
+2. Найди информацию о занятиях на завтра ({tomorrow.strftime('%d.%m.%Y')})
+3. Сопоставь предметы из расписания с домашними заданиями из суммаризации
+4. Добавь эту информацию к существующей суммаризации
+
+Если расписание на {tomorrow.strftime('%d.%m.%Y')} не найдено в OCR тексте, напиши "Расписание на {tomorrow.strftime('%d.%m.%Y')} не найдено в расписании".
+
+Формат ответа:
+[Существующая суммаризация]
+
+📅 **Расписание на завтра ({tomorrow.strftime('%d.%m.%Y')}):**
+• Время - Предмет/Активность
+• Время - **Предмет** ⚠️ (ДЗ: описание задания) - если в суммаризации есть ДЗ по этому предмету
+• Время - Предмет/Активность
+...
+
+ВАЖНО: Если в суммаризации упоминается домашнее задание по какому-либо предмету из расписания на завтра:
+- Выдели этот предмет жирным шрифтом (**Предмет**)
+- Добавь эмодзи ⚠️ 
+- В скобках укажи домашнее задание: (ДЗ: описание)
+
+Примеры:
+• 09:00 - **Математика** ⚠️ (ДЗ: стр. 45-47, задачи 12-15)
+• 10:30 - Русский язык
+• 12:00 - **Физкультура** ⚠️ (ДЗ: принести спортивную форму)"""
     
     # ===== НОВЫЕ МЕТОДЫ С ЦЕНТРАЛИЗОВАННЫМ ЛОГИРОВАНИЕМ =====
     
@@ -523,9 +732,12 @@ class StepExecutor:
         from shared.prompts import PromptTemplates
         prompt = PromptTemplates.get_summarization_prompt(formatted_text, self.context.provider.get_name())
         
-        # ЛОГИРУЕМ ЗАПРОС
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_request(prompt, log_type)
+        # ЛОГИРУЕМ ЗАПРОС через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "summarization", "request", prompt,
+                {"message_count": len(messages), "log_type": log_type}
+            )
         
         # Вызываем провайдер (БЕЗ логирования внутри)
         import time
@@ -536,9 +748,12 @@ class StepExecutor:
         if not summary:
             raise ValueError("Не удалось получить суммаризацию")
         
-        # ЛОГИРУЕМ ОТВЕТ
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_response(summary, log_type, response_time)
+        # ЛОГИРУЕМ ОТВЕТ через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "summarization", "response", summary,
+                {"response_time": response_time, "log_type": log_type}
+            )
         
         self.logger.info(f"✅ Суммаризация получена ({len(summary)} символов)")
         return summary
@@ -556,9 +771,12 @@ class StepExecutor:
         # Создаем промпт
         reflection_prompt = self._create_reflection_prompt(summary)
         
-        # ЛОГИРУЕМ ЗАПРОС (явно знаем тип!)
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_request(reflection_prompt, log_type)
+        # ЛОГИРУЕМ ЗАПРОС через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "reflection", "request", reflection_prompt,
+                {"log_type": log_type}
+            )
         
         # Вызываем провайдер (БЕЗ логирования внутри)
         import time
@@ -569,9 +787,12 @@ class StepExecutor:
         if not reflection:
             raise ValueError("Не удалось получить рефлексию")
         
-        # ЛОГИРУЕМ ОТВЕТ (явно знаем тип!)
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_response(reflection, log_type, response_time)
+        # ЛОГИРУЕМ ОТВЕТ через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "reflection", "response", reflection,
+                {"response_time": response_time, "log_type": log_type}
+            )
         
         self.logger.info(f"✅ Рефлексия получена ({len(reflection)} символов)")
         return reflection
@@ -599,9 +820,12 @@ class StepExecutor:
         improvement_prompt = self._create_improvement_prompt(original_summary, reflection)
         self.logger.info(f"📝 Промпт для улучшения создан ({len(improvement_prompt)} символов)")
         
-        # ЛОГИРУЕМ ЗАПРОС
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_request(improvement_prompt, log_type)
+        # ЛОГИРУЕМ ЗАПРОС через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "improvement", "request", improvement_prompt,
+                {"log_type": log_type}
+            )
         
         # Вызываем провайдер (БЕЗ логирования внутри)
         import time
@@ -612,9 +836,12 @@ class StepExecutor:
         if not improved_summary:
             raise ValueError("Не удалось получить улучшенную суммаризацию")
         
-        # ЛОГИРУЕМ ОТВЕТ
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_response(improved_summary, log_type, response_time)
+        # ЛОГИРУЕМ ОТВЕТ через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "improvement", "response", improved_summary,
+                {"response_time": response_time, "log_type": log_type}
+            )
         
         self.logger.info(f"✅ Улучшенная суммаризация получена ({len(improved_summary)} символов)")
         return improved_summary
@@ -632,9 +859,12 @@ class StepExecutor:
         
         cleaning_prompt = self._create_cleaning_prompt(messages)
         
-        # ЛОГИРУЕМ ЗАПРОС
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_request(cleaning_prompt, log_type)
+        # ЛОГИРУЕМ ЗАПРОС через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "cleaning", "request", cleaning_prompt,
+                {"message_count": len(messages), "log_type": log_type}
+            )
         
         # Вызываем провайдер (БЕЗ логирования внутри)
         import time
@@ -646,9 +876,12 @@ class StepExecutor:
             self.logger.warning("Не удалось получить ответ от LLM для очистки, возвращаем исходные сообщения")
             return messages
         
-        # ЛОГИРУЕМ ОТВЕТ
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_response(response, log_type, response_time)
+        # ЛОГИРУЕМ ОТВЕТ через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "cleaning", "response", response,
+                {"response_time": response_time, "log_type": log_type}
+            )
         
         selected_ids = self._parse_cleaning_response(response)
         
@@ -665,15 +898,20 @@ class StepExecutor:
         """Классификация с централизованным логированием"""
         self.logger.info("🔍 Выполнение классификации")
         
-        summary = self.context.step_results.get('summarization')
-        if not summary:
-            raise ValueError("Нет результата суммаризации для классификации")
+        # Пытаемся получить результат предыдущих шагов или исходные сообщения
+        input_data = self._get_input_for_step(['summarization', 'cleaning'])
         
-        classification_prompt = self._create_classification_prompt(summary)
+        if not input_data:
+            raise ValueError("Нет данных для классификации")
         
-        # ЛОГИРУЕМ ЗАПРОС
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_request(classification_prompt, log_type)
+        classification_prompt = self._create_classification_prompt(input_data)
+        
+        # ЛОГИРУЕМ ЗАПРОС через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "classification", "request", classification_prompt,
+                {"log_type": log_type}
+            )
         
         # Вызываем провайдер (БЕЗ логирования внутри)
         import time
@@ -684,9 +922,12 @@ class StepExecutor:
         if not response:
             raise ValueError("Не удалось получить классификацию")
         
-        # ЛОГИРУЕМ ОТВЕТ
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_response(response, log_type, response_time)
+        # ЛОГИРУЕМ ОТВЕТ через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "classification", "response", response,
+                {"response_time": response_time, "log_type": log_type}
+            )
         
         events = self._parse_classification_response(response)
         self.logger.info(f"✅ Классификация завершена: {len(events)} событий")
@@ -697,15 +938,20 @@ class StepExecutor:
         """Извлечение событий с централизованным логированием"""
         self.logger.info("📋 Выполнение извлечения событий")
         
-        events = self.context.step_results.get('classification', [])
-        if not events:
-            raise ValueError("Нет результатов классификации для извлечения")
+        # Пытаемся получить результат классификации или работаем с другими данными
+        input_data = self._get_input_for_step(['classification', 'summarization', 'cleaning'])
         
-        extraction_prompt = self._create_extraction_prompt(events)
+        if not input_data:
+            raise ValueError("Нет данных для экстракции")
         
-        # ЛОГИРУЕМ ЗАПРОС
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_request(extraction_prompt, log_type)
+        extraction_prompt = self._create_extraction_prompt(input_data)
+        
+        # ЛОГИРУЕМ ЗАПРОС через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "extraction", "request", extraction_prompt,
+                {"log_type": log_type}
+            )
         
         # Вызываем провайдер (БЕЗ логирования внутри)
         import time
@@ -716,9 +962,12 @@ class StepExecutor:
         if not response:
             raise ValueError("Не удалось получить извлечение событий")
         
-        # ЛОГИРУЕМ ОТВЕТ
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_response(response, log_type, response_time)
+        # ЛОГИРУЕМ ОТВЕТ через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "extraction", "response", response,
+                {"response_time": response_time, "log_type": log_type}
+            )
         
         extracted_events = self._parse_extraction_response(response)
         self.logger.info(f"✅ Извлечение завершено: {len(extracted_events)} событий")
@@ -729,17 +978,46 @@ class StepExecutor:
         """Анализ расписания с централизованным логированием"""
         self.logger.info("📅 Выполнение анализа расписания")
         
-        # Извлекаем расписание на завтра
-        tomorrow_schedule = self._extract_tomorrow_schedule()
+        # Получаем OCR текст расписания из БД
+        schedule_text = await self._get_schedule_text_from_db()
         
-        if not tomorrow_schedule:
-            return "📅 Расписание на завтра не найдено в сообщениях"
+        # Получаем данные из предыдущих шагов (суммаризация)
+        input_data = self._get_input_for_step(['summarization', 'cleaning'])
         
-        schedule_prompt = self._create_schedule_analysis_prompt(tomorrow_schedule)
+        # Формируем сообщение об ошибке если нет данных
+        error_message = None
+        if not schedule_text:
+            error_message = "📅 ⚠️ Расписание не найдено в базе данных. Загрузите фото расписания через меню анализа изображений."
+            self.logger.warning(f"📅 Расписание для группы {self.context.request.chat_context.get('group_id')} не найдено")
+        elif not input_data:
+            error_message = "📅 ⚠️ Нет данных для анализа расписания."
+            self.logger.warning("📅 Нет входных данных для анализа расписания")
         
-        # ЛОГИРУЕМ ЗАПРОС
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_request(schedule_prompt, log_type)
+        # Если есть ошибка, логируем её и возвращаем
+        if error_message:
+            # ЛОГИРУЕМ ОШИБКУ через LogSession
+            if self.context.log_session:
+                await self.context.log_session.log_phase(
+                    "schedule_analysis", "error", error_message,
+                    {
+                        "log_type": log_type,
+                        "has_schedule_text": bool(schedule_text),
+                        "has_input_data": bool(input_data)
+                    }
+                )
+            
+            self.logger.info(f"⚠️ Анализ расписания пропущен: {error_message}")
+            return error_message
+        
+        # Формируем промпт для анализа расписания
+        schedule_prompt = self._create_schedule_analysis_prompt(input_data, schedule_text)
+        
+        # ЛОГИРУЕМ ЗАПРОС через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "schedule_analysis", "request", schedule_prompt,
+                {"log_type": log_type}
+            )
         
         # Вызываем провайдер (БЕЗ логирования внутри)
         import time
@@ -748,11 +1026,21 @@ class StepExecutor:
         response_time = time.time() - start_time
         
         if not response:
-            raise ValueError("Не удалось получить анализ расписания")
+            error_msg = "❌ Не удалось получить анализ расписания от LLM"
+            # ЛОГИРУЕМ ОШИБКУ
+            if self.context.log_session:
+                await self.context.log_session.log_phase(
+                    "schedule_analysis", "error", error_msg,
+                    {"response_time": response_time, "log_type": log_type}
+                )
+            raise ValueError(error_msg)
         
-        # ЛОГИРУЕМ ОТВЕТ
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_response(response, log_type, response_time)
+        # ЛОГИРУЕМ ОТВЕТ через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "schedule_analysis", "response", response,
+                {"response_time": response_time, "log_type": log_type}
+            )
         
         self.logger.info(f"✅ Анализ расписания завершен ({len(response)} символов)")
         return response
@@ -761,15 +1049,20 @@ class StepExecutor:
         """Сводка для родителей с централизованным логированием"""
         self.logger.info("👨‍👩‍👧‍👦 Выполнение сводки для родителей")
         
-        events = self.context.step_results.get('extraction', [])
-        if not events:
-            raise ValueError("Нет результатов извлечения для сводки")
+        # Пытаемся получить результат экстракции или используем другие данные
+        input_data = self._get_input_for_step(['extraction', 'classification', 'summarization'])
         
-        parent_prompt = self._create_parent_summary_prompt(events)
+        if not input_data:
+            raise ValueError("Нет данных для сводки")
         
-        # ЛОГИРУЕМ ЗАПРОС
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_request(parent_prompt, log_type)
+        parent_prompt = self._create_parent_summary_prompt(input_data)
+        
+        # ЛОГИРУЕМ ЗАПРОС через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "parent_summary", "request", parent_prompt,
+                {"log_type": log_type}
+            )
         
         # Вызываем провайдер (БЕЗ логирования внутри)
         import time
@@ -780,9 +1073,12 @@ class StepExecutor:
         if not response:
             raise ValueError("Не удалось получить сводку для родителей")
         
-        # ЛОГИРУЕМ ОТВЕТ
-        if self.context.request.llm_logger:
-            self.context.request.llm_logger.log_llm_response(response, log_type, response_time)
+        # ЛОГИРУЕМ ОТВЕТ через LogSession
+        if self.context.log_session:
+            await self.context.log_session.log_phase(
+                "parent_summary", "response", response,
+                {"response_time": response_time, "log_type": log_type}
+            )
         
         self.logger.info(f"✅ Сводка для родителей завершена ({len(response)} символов)")
         return response
@@ -814,7 +1110,11 @@ class StepExecutor:
         if StepType.SCHEDULE_ANALYSIS in steps:
             schedule = self.context.step_results.get('schedule_analysis', '')
             if schedule:
-                result_parts.append(schedule)
+                # Проверяем, является ли это сообщением об ошибке
+                if schedule.startswith('📅 ⚠️') or schedule.startswith('❌'):
+                    result_parts.append(f"⚠️ **Анализ расписания:**\n{schedule}")
+                else:
+                    result_parts.append(schedule)
         
         # Структурный анализ
         if StepType.PARENT_SUMMARY in steps:

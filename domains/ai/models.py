@@ -88,6 +88,7 @@ class PipelineContext(BaseModel):
     request: AnalysisRequest
     provider: Any = None
     llm_logger: Optional[Any] = None
+    log_session: Optional[Any] = None  # LogSession для централизованного логирования
     step_results: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 

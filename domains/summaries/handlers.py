@@ -811,12 +811,15 @@ class SummaryHandlers:
             from domains.ai.models import StepType
             steps = self._convert_scenario_to_steps(scenario, clean_data_first)
             
+            # Получаем group_id из vk_chat_id
+            group_id = self._get_group_id_from_vk_chat(vk_chat_id)
+            
             analysis_request = AnalysisRequest(
                 messages=messages_data,
                 provider_name=provider,
                 model_id=model,
                 user_id=query.from_user.id,
-                chat_context={'group_id': 1, 'date': date},  # TODO: получить реальный group_id
+                chat_context={'group_id': group_id, 'date': date},
                 llm_logger=llm_logger,
                 steps=steps  # ✅ ИСПОЛЬЗУЕМ НОВУЮ АРХИТЕКТУРУ
             )
@@ -1114,12 +1117,25 @@ class SummaryHandlers:
         
         try:
             # Парсим: toggle_step_{step_name}_{vk_chat_id}_{date}
-            parts = query.data.replace('toggle_step_', '', 1).split('_')
-            step_name = parts[0]
-            date = parts[-1]
-            vk_chat_id = '_'.join(parts[1:-1])
+            # Извлекаем всё после toggle_step_
+            remainder = query.data.replace('toggle_step_', '', 1)
             
+            # Находим имя шага среди известных StepType
             from domains.ai.models import StepType
+            step_name = None
+            for step_type in StepType:
+                if remainder.startswith(step_type.value + '_'):
+                    step_name = step_type.value
+                    # Извлекаем vk_chat_id и date после имени шага
+                    rest = remainder[len(step_name) + 1:]  # +1 для '_'
+                    parts = rest.split('_')
+                    date = parts[-1]
+                    vk_chat_id = '_'.join(parts[:-1])
+                    break
+            
+            if not step_name:
+                raise ValueError(f"Не удалось распарсить имя шага из: {query.data}")
+            
             step_type = StepType(step_name)
             
             custom_steps = context.user_data.get('custom_steps', [StepType.SUMMARIZATION])
@@ -1166,6 +1182,9 @@ class SummaryHandlers:
             # Создать llm_logger с правильными параметрами
             llm_logger = self._create_llm_logger(date, scenario, model, provider, context.user_data.get('user_id'))
             
+            # Получаем group_id из vk_chat_id
+            group_id = self._get_group_id_from_vk_chat(vk_chat_id)
+            
             # Создаем запрос с новыми шагами
             from domains.ai.models import AnalysisRequest, StepType
             request = AnalysisRequest(
@@ -1173,7 +1192,7 @@ class SummaryHandlers:
                 provider_name=provider,
                 model_id=model,
                 user_id=context.user_data.get('user_id'),
-                chat_context={'group_id': 1, 'date': date},  # TODO: получить реальный group_id
+                chat_context={'group_id': group_id, 'date': date},
                 llm_logger=llm_logger,  # Используем созданный logger
                 steps=steps
             )
@@ -1423,6 +1442,29 @@ class SummaryHandlers:
         else:
             # Генерируем имя из списка шагов
             return "custom_" + "_".join([s.value for s in steps])
+    
+    def _get_group_id_from_vk_chat(self, vk_chat_id: str) -> int:
+        """Получить group_id из vk_chat_id"""
+        try:
+            from core.app_context import get_app_context
+            from domains.chats.repository import GroupVKChatRepository
+            
+            ctx = get_app_context()
+            group_vk_chat_repo = GroupVKChatRepository(ctx.db_connection)
+            
+            # Получаем group_id из таблицы group_vk_chats
+            group_id = group_vk_chat_repo.get_group_id_by_vk_chat(vk_chat_id)
+            
+            if group_id:
+                logger.info(f"📅 Найден group_id {group_id} для vk_chat_id {vk_chat_id}")
+                return group_id
+            else:
+                logger.warning(f"📅 Group ID не найден для vk_chat_id {vk_chat_id}, используем значение по умолчанию")
+                return 1  # Fallback значение
+                
+        except Exception as e:
+            logger.error(f"Ошибка получения group_id для vk_chat_id {vk_chat_id}: {e}")
+            return 1  # Fallback значение
     
     async def save_custom_preset_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик сохранения пользовательского пресета"""

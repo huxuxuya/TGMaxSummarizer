@@ -391,6 +391,26 @@ class GroupVKChatRepository(BaseRepository):
         query = "DELETE FROM group_vk_chats WHERE group_id = ? AND vk_chat_id = ?"
         affected = self.execute_update(query, (group_id, vk_chat_id))
         return affected > 0
+    
+    def get_group_id_by_vk_chat(self, vk_chat_id: str) -> Optional[int]:
+        """Получить group_id по vk_chat_id, предпочитая группы с расписанием"""
+        # Сначала ищем группы с расписанием
+        query = """
+            SELECT gvc.group_id 
+            FROM group_vk_chats gvc
+            JOIN schedule_analysis sa ON gvc.group_id = sa.group_id
+            WHERE gvc.vk_chat_id = ?
+            ORDER BY sa.analysis_date DESC
+            LIMIT 1
+        """
+        results = self.execute_query(query, (vk_chat_id,))
+        if results:
+            return results[0]['group_id']
+        
+        # Если нет групп с расписанием, берем любую группу
+        query = "SELECT group_id FROM group_vk_chats WHERE vk_chat_id = ? LIMIT 1"
+        results = self.execute_query(query, (vk_chat_id,))
+        return results[0]['group_id'] if results else None
 
 class ScheduleAnalysisRepository(BaseRepository):
     """Репозиторий для работы с анализом фото расписания"""
