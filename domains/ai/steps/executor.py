@@ -657,9 +657,11 @@ class StepExecutor:
     def _create_schedule_analysis_prompt(self, input_data: Any, schedule_text: str) -> str:
         """Создать промпт для анализа расписания"""
         from datetime import datetime, timedelta
+        from shared.prompts import FormattingRequirements
         
         tomorrow = datetime.now() + timedelta(days=1)
         tomorrow_weekday = tomorrow.strftime("%A").lower()
+        formatting_rules = FormattingRequirements.get_formatting_instructions("markdown")
         
         # Если входные данные - это список сообщений
         if isinstance(input_data, list):
@@ -707,7 +709,9 @@ OCR ТЕКСТ РАСПИСАНИЯ:
 Примеры:
 • 09:00 - **Математика** ⚠️ (ДЗ: стр. 45-47, задачи 12-15)
 • 10:30 - Русский язык
-• 12:00 - **Физкультура** ⚠️ (ДЗ: принести спортивную форму)"""
+• 12:00 - **Физкультура** ⚠️ (ДЗ: принести спортивную форму)
+
+{formatting_rules}"""
     
     # ===== НОВЫЕ МЕТОДЫ С ЦЕНТРАЛИЗОВАННЫМ ЛОГИРОВАНИЕМ =====
     
