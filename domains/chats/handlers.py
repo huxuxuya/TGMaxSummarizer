@@ -595,7 +595,7 @@ class ChatHandlers:
             context.user_data['schedule_group_id'] = group_id
             
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.schedule_management_keyboard()
+            keyboard = keyboards.schedule_management_keyboard(False, False)  # Нет фото, нет анализа
             
             await query.edit_message_text(
                 "📅 [Установка расписания]\n\n"
@@ -657,7 +657,7 @@ class ChatHandlers:
                 schedule_analysis_repo.delete_schedule_analysis(group_id)
             
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.schedule_management_keyboard()
+            keyboard = keyboards.schedule_management_keyboard(False, False)  # После удаления нет фото и анализа
             
             if success:
                 await query.edit_message_text(

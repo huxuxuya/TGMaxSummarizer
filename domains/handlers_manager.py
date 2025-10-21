@@ -192,6 +192,8 @@ class HandlersManager:
                              self.chat_handlers.delete_schedule_handler)
         self.registry.register("show_schedule", 
                              self.chat_handlers.show_schedule_handler)
+        self.registry.register("show_full_schedule_text", 
+                             self._handle_show_full_schedule_text)
         self.registry.register("select_group_for_schedule_*", 
                              self._handle_select_group_for_schedule)
         self.registry.register("back_to_group_menu", 
@@ -336,7 +338,7 @@ class HandlersManager:
                 context.user_data.pop('schedule_group_id', None)
                 
                 from infrastructure.telegram import keyboards
-                keyboard = keyboards.schedule_management_keyboard()
+                keyboard = keyboards.schedule_management_keyboard(True, False)  # Есть фото, но еще нет анализа
                 
                 await update.effective_message.reply_text(
                     "✅ Фото расписания сохранено",
@@ -388,9 +390,22 @@ class HandlersManager:
                 context.user_data['selected_group_id'] = group.group_id
                 
                 from infrastructure.telegram import keyboards
-                keyboard = keyboards.schedule_management_keyboard()
                 has_schedule = ctx.chat_service.get_schedule_photo(group.group_id) is not None
-                status_text = "✅ Расписание установлено" if has_schedule else "❌ Расписание не установлено"
+                
+                # Проверяем, есть ли анализ расписания
+                from domains.chats.repository import ScheduleAnalysisRepository
+                schedule_analysis_repo = ScheduleAnalysisRepository(ctx.db_connection)
+                schedule_analysis = schedule_analysis_repo.get_schedule_analysis(group.group_id)
+                
+                keyboard = keyboards.schedule_management_keyboard(has_schedule, bool(schedule_analysis))
+                
+                # Формируем статус
+                if has_schedule and schedule_analysis:
+                    status_text = "✅ Расписание установлено и распознано"
+                elif has_schedule:
+                    status_text = "⚠️ Расписание установлено, но не распознано"
+                else:
+                    status_text = "❌ Расписание не установлено"
                 
                 from infrastructure.telegram.formatter import TelegramFormatter
                 await update.message.reply_text(
@@ -571,6 +586,106 @@ class HandlersManager:
                 "❌ Ошибка при открытии меню расписания"
             )
     
+    async def _handle_show_full_schedule_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик показа полного текста расписания"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Получаем выбранную группу из контекста
+            selected_group_id = context.user_data.get('selected_group_id')
+            
+            if not selected_group_id:
+                await query.edit_message_text(
+                    "❌ Группа не выбрана\n\n"
+                    "Сначала выберите группу в главном меню."
+                )
+                return
+            
+            # Получаем анализ расписания
+            ctx = get_app_context()
+            from domains.chats.repository import ScheduleAnalysisRepository
+            schedule_analysis_repo = ScheduleAnalysisRepository(ctx.db_connection)
+            schedule_analysis = schedule_analysis_repo.get_schedule_analysis(selected_group_id)
+            
+            if not schedule_analysis or not schedule_analysis.get('analysis_text'):
+                await query.edit_message_text(
+                    "❌ Текст расписания не найден\n\n"
+                    "Возможно, расписание еще не было проанализировано."
+                )
+                return
+            
+            analysis_text = schedule_analysis['analysis_text']
+            model_used = schedule_analysis.get('model_used', 'Неизвестно')
+            analysis_date = schedule_analysis.get('analysis_date', 'Неизвестно')
+            
+            # Форматируем текст для отображения
+            from infrastructure.telegram.formatter import TelegramFormatter
+            escaped_text = TelegramFormatter.escape_markdown_v1(analysis_text)
+            
+            # Если текст слишком длинный, разбиваем на части
+            max_length = 4000  # Telegram лимит
+            if len(escaped_text) > max_length:
+                # Разбиваем на части
+                parts = []
+                current_part = ""
+                lines = escaped_text.split('\n')
+                
+                for line in lines:
+                    if len(current_part + line + '\n') > max_length:
+                        if current_part:
+                            parts.append(current_part.strip())
+                            current_part = line + '\n'
+                        else:
+                            # Строка сама по себе слишком длинная
+                            parts.append(line[:max_length])
+                    else:
+                        current_part += line + '\n'
+                
+                if current_part:
+                    parts.append(current_part.strip())
+                
+                # Отправляем первую часть
+                await query.edit_message_text(
+                    f"📝 *Полный текст расписания*\n\n"
+                    f"🤖 Модель: {TelegramFormatter.escape_markdown_v1(model_used)}\n"
+                    f"📅 Дата анализа: {TelegramFormatter.escape_markdown_v1(str(analysis_date))}\n\n"
+                    f"📄 Часть 1 из {len(parts)}:\n\n{parts[0]}",
+                    parse_mode='Markdown',
+                    disable_web_page_preview=True
+                )
+                
+                # Отправляем остальные части как новые сообщения
+                for i, part in enumerate(parts[1:], 2):
+                    await query.message.reply_text(
+                        f"📄 Часть {i} из {len(parts)}:\n\n{part}",
+                        parse_mode='Markdown',
+                        disable_web_page_preview=True
+                    )
+            else:
+                await query.edit_message_text(
+                    f"📝 *Полный текст расписания*\n\n"
+                    f"🤖 Модель: {TelegramFormatter.escape_markdown_v1(model_used)}\n"
+                    f"📅 Дата анализа: {TelegramFormatter.escape_markdown_v1(str(analysis_date))}\n\n"
+                    f"📄 Текст:\n\n{escaped_text}",
+                    parse_mode='Markdown',
+                    disable_web_page_preview=True
+                )
+            
+            # Добавляем кнопку "Назад"
+            from infrastructure.telegram import keyboards
+            keyboard = keyboards.schedule_management_keyboard(True, True)
+            await query.message.reply_text(
+                "Выберите действие:",
+                reply_markup=keyboard
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_show_full_schedule_text: {e}")
+            await query.edit_message_text(
+                "❌ Ошибка при получении текста расписания"
+            )
+    
     async def _handle_back_to_group_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик возврата к главному меню группы"""
         query = update.callback_query
@@ -635,11 +750,24 @@ class HandlersManager:
                 return
             
             from infrastructure.telegram import keyboards
-            keyboard = keyboards.schedule_management_keyboard()
             
             # Проверяем, есть ли уже расписание
             has_schedule = ctx.chat_service.get_schedule_photo(group_id) is not None
-            status_text = "✅ Расписание установлено" if has_schedule else "❌ Расписание не установлено"
+            
+            # Проверяем, есть ли анализ расписания
+            from domains.chats.repository import ScheduleAnalysisRepository
+            schedule_analysis_repo = ScheduleAnalysisRepository(ctx.db_connection)
+            schedule_analysis = schedule_analysis_repo.get_schedule_analysis(group_id)
+            
+            keyboard = keyboards.schedule_management_keyboard(has_schedule, bool(schedule_analysis))
+            
+            # Формируем статус
+            if has_schedule and schedule_analysis:
+                status_text = "✅ Расписание установлено и распознано"
+            elif has_schedule:
+                status_text = "⚠️ Расписание установлено, но не распознано"
+            else:
+                status_text = "❌ Расписание не установлено"
             
             from infrastructure.telegram.formatter import TelegramFormatter
             await query.edit_message_text(
